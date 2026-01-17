@@ -14,7 +14,7 @@ import { useConversation } from '@/contexts/ConversationContext'
 import { useModelFetcher, ERROR_TYPES } from '@/hooks/useModelFetcher'
 import { useError } from '@/contexts/ErrorContext'
 import { sendStreamingMessage } from '@/services/chat/chatClient'
-import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon } from 'lucide-react'
+import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot } from 'lucide-react'
 import { formatMessageForAPI, formatMessagesForAPI } from '@/utils/messageFormatters'
 import { isThinkingModel, isImageGenerationModel, getModalitiesForModel } from '@/utils/modelHelpers'
 import { handleStreamingError } from '@/utils/errorHandlers'
@@ -60,7 +60,13 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     deleteMessage,
     currentConversationId,
     getCurrentConversation,
-    getConversationById
+    getConversationById,
+    addOpencodeEvent,
+    setOpencodeStatus,
+    clearOpencodeActivity,
+    getOpencodeActivity,
+    setOpencodeProcessingText,
+    setOpencodePendingPermission
   } = useConversation()
   const { fetchModels } = useModelFetcher()
   const { showMissingApiKeyAlert, showFetchErrorAlert, showInvalidApiKeyAlert } = useError()
@@ -258,6 +264,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       return
     }
 
+    let assistantMessageId
     try {
       // Add user message with attachments to the captured conversation
       await addMessage({
@@ -275,6 +282,9 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         model: currentModel,
         provider: currentProvider
       }, targetConversationId)
+
+      // Store the assistant message ID for OpenCode activity tracking
+      assistantMessageId = assistantMessage.id
     } catch (error) {
       console.error('Error adding messages:', error)
       const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
@@ -325,6 +335,15 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     })
 
     try {
+      // Create OpenCode callbacks that use the assistant message ID
+      const opencodeCallbacks = {
+        addOpencodeEvent: (event) => addOpencodeEvent(assistantMessageId, event),
+        setOpencodeStatus: (status) => setOpencodeStatus(assistantMessageId, status),
+        clearOpencodeActivity: () => clearOpencodeActivity(assistantMessageId),
+        setOpencodeProcessingText: (text) => setOpencodeProcessingText(assistantMessageId, text),
+        setOpencodePendingPermission: (permission) => setOpencodePendingPermission(assistantMessageId, permission)
+      }
+
       await sendStreamingMessage({
         providerId: currentProvider,
         providerConfig: customProviders.find(p => p.id === currentProvider),
@@ -334,7 +353,10 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         ...streamingCallbacks,
         abortSignal,
         modalities: getModalitiesForCurrentModel(currentModel, currentProvider),
-        reasoning: isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null
+        reasoning: isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null,
+        conversationId: targetConversationId,
+        useOpenCode: true, // Always use OpenCode
+        ...opencodeCallbacks
       })
     } catch (error) {
       console.error('Unexpected error:', error)
@@ -425,6 +447,15 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       const modalities = getModalitiesForCurrentModel(currentModel, currentProvider)
       const reasoning = isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null
 
+      // Create OpenCode callbacks that use the assistant message ID
+      const opencodeCallbacks = {
+        addOpencodeEvent: (event) => addOpencodeEvent(assistantMessage.id, event),
+        setOpencodeStatus: (status) => setOpencodeStatus(assistantMessage.id, status),
+        clearOpencodeActivity: () => clearOpencodeActivity(assistantMessage.id),
+        setOpencodeProcessingText: (text) => setOpencodeProcessingText(assistantMessage.id, text),
+        setOpencodePendingPermission: (permission) => setOpencodePendingPermission(assistantMessage.id, permission)
+      }
+
       await sendStreamingMessage({
         providerId: currentProvider,
         providerConfig: customProviders.find(p => p.id === currentProvider),
@@ -434,7 +465,10 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         ...streamingCallbacks,
         abortSignal,
         modalities,
-        reasoning
+        reasoning,
+        conversationId: retryConversationId,
+        useOpenCode: true, // Always use OpenCode
+        ...opencodeCallbacks
       })
     } catch (error) {
       console.error('Unexpected retry error:', error)
@@ -467,6 +501,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     }
 
     let messagesForApi
+    let editAssistantMessageId
     try {
       // Update the user message content in state
       const updatedMessages = [...messages]
@@ -486,7 +521,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       messagesForApi = formatMessagesForAPI(messagesUpToEdit)
 
       // Add new assistant placeholder to the captured conversation
-      await addMessage({
+      const assistantMessage = await addMessage({
         role: 'assistant',
         content: '',
         reasoning: '',
@@ -494,6 +529,9 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         model: currentModel,
         provider: currentProvider
       }, editConversationId)
+
+      // Store the assistant message ID for OpenCode activity tracking
+      editAssistantMessageId = assistantMessage.id
     } catch (error) {
       console.error('Error editing message:', error)
       const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
@@ -535,6 +573,15 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       const modalities = getModalitiesForCurrentModel(currentModel, currentProvider)
       const reasoning = isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null
 
+      // Create OpenCode callbacks that use the assistant message ID
+      const opencodeCallbacks = {
+        addOpencodeEvent: (event) => addOpencodeEvent(editAssistantMessageId, event),
+        setOpencodeStatus: (status) => setOpencodeStatus(editAssistantMessageId, status),
+        clearOpencodeActivity: () => clearOpencodeActivity(editAssistantMessageId),
+        setOpencodeProcessingText: (text) => setOpencodeProcessingText(editAssistantMessageId, text),
+        setOpencodePendingPermission: (permission) => setOpencodePendingPermission(editAssistantMessageId, permission)
+      }
+
       await sendStreamingMessage({
         providerId: currentProvider,
         providerConfig: customProviders.find(p => p.id === currentProvider),
@@ -544,7 +591,10 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         ...streamingCallbacks,
         abortSignal,
         modalities,
-        reasoning
+        reasoning,
+        conversationId: editConversationId,
+        useOpenCode: true, // Always use OpenCode
+        ...opencodeCallbacks
       })
     } catch (error) {
       console.error('Unexpected edit error:', error)
@@ -715,7 +765,14 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         </div>
       </div>
 
-      <MessageList messages={messages} onRetry={handleRetry} onEditUserMessage={handleEditUserMessage} onDeleteMessage={deleteMessage} isStreaming={isConversationStreaming(currentConversationId)} />
+      <MessageList
+        messages={messages}
+        onRetry={handleRetry}
+        onEditUserMessage={handleEditUserMessage}
+        onDeleteMessage={deleteMessage}
+        isStreaming={isConversationStreaming(currentConversationId)}
+        getOpencodeActivity={getOpencodeActivity}
+      />
       <MessageInput
         onSendMessage={handleSendMessage}
         isStreaming={isConversationStreaming(currentConversationId)}

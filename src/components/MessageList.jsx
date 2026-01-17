@@ -155,7 +155,7 @@ const MemoizedMarkdownContent = memo(({ content }) => {
   return prevProps.content === nextProps.content
 })
 
-function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, isStreaming = false }) {
+function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, isStreaming = false, getOpencodeActivity }) {
   const [editingMessageId, setEditingMessageId] = useState(null)
   const [editContent, setEditContent] = useState('')
   const [deletingMessageId, setDeletingMessageId] = useState(null)
@@ -169,7 +169,22 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
   const scrollThrottleRef = useRef(null)
   const [previewImage, setPreviewImage] = useState(null)
 
-  // Auto-scroll thinking section to show latest tokens (optimized with throttle)
+  // Handle permission response
+  const handlePermissionResponse = async (requestID, reply) => {
+    try {
+      console.log('🔵 Responding to permission:', requestID, reply)
+      const result = await window.electronAPI.opencode.respondPermission(requestID, reply)
+      if (!result.success) {
+        console.error('Failed to respond to permission:', result.error)
+      } else {
+        console.log('✓ Permission response sent successfully')
+      }
+    } catch (error) {
+      console.error('Error responding to permission:', error)
+    }
+  }
+
+  // Auto-scroll processing section to show latest tokens (optimized with throttle)
   useEffect(() => {
     // Only run if streaming
     if (!isStreaming) return
@@ -181,15 +196,29 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
 
     // Throttle scroll updates to every 100ms
     scrollThrottleRef.current = setTimeout(() => {
-      // Only scroll the last message if it has reasoning
+      // Only scroll the last message if it has reasoning or processing
       const lastMessage = messages[messages.length - 1]
+
+      // Auto-scroll for reasoning (thinking models)
       if (lastMessage?.reasoning && !lastMessage.isReasoningComplete && !expandedThinking.has(lastMessage.id)) {
         const scrollElement = thinkingScrollRefs.current.get(lastMessage.id)
         if (scrollElement) {
-          // Auto-scroll to latest when in shrinked state during streaming
           requestAnimationFrame(() => {
             scrollElement.scrollTop = scrollElement.scrollHeight
           })
+        }
+      }
+
+      // Auto-scroll for OpenCode processing (when folded)
+      if (lastMessage && getOpencodeActivity) {
+        const messageActivity = getOpencodeActivity(lastMessage.id)
+        if (messageActivity && !messageActivity.isProcessingComplete && messageActivity.processingText && !expandedThinking.has(lastMessage.id)) {
+          const scrollElement = thinkingScrollRefs.current.get(lastMessage.id)
+          if (scrollElement) {
+            requestAnimationFrame(() => {
+              scrollElement.scrollTop = scrollElement.scrollHeight
+            })
+          }
         }
       }
     }, 100)
@@ -199,7 +228,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
         clearTimeout(scrollThrottleRef.current)
       }
     }
-  }, [messages, expandedThinking, isStreaming])
+  }, [messages, expandedThinking, isStreaming, getOpencodeActivity])
 
   // Auto-collapse long messages when they first appear
   useEffect(() => {
@@ -314,6 +343,11 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
 
   // Extract generated images from content and return clean content + images array
   const parseGeneratedImages = (content) => {
+    // Handle undefined or null content
+    if (!content || typeof content !== 'string') {
+      return { cleanContent: '', images: [] }
+    }
+
     const imageRegex = /\[GENERATED_IMAGE:(.*?):END_IMAGE\]/gs
     const images = []
     let match
@@ -361,6 +395,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
           const isLastMessage = index === messages.length - 1
           const isGenerating = isStreaming && isLastMessage && message.role === 'assistant'
           const { cleanContent, images: generatedImages } = parseGeneratedImages(message.content)
+          const opencodeActivity = getOpencodeActivity ? getOpencodeActivity(message.id) : null
 
           return (
             <div
@@ -441,10 +476,10 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                     </div>
                   ) : (
                     <>
-                      {/* Thinking section - shows reasoning tokens */}
-                      {message.reasoning && message.reasoning.length > 0 && (
+                      {/* Processing section - shows reasoning or OpenCode steps */}
+                      {(message.reasoning && message.reasoning.length > 0) || (message.role === 'assistant' && opencodeActivity && (opencodeActivity.isActive || opencodeActivity.processingText || opencodeActivity.events?.length > 0)) ? (
                         <div className="pb-3 mb-3 border-b border-border">
-                          {!message.isReasoningComplete ? (
+                          {((!message.isReasoningComplete && message.reasoning) || (isLastMessage && opencodeActivity && !opencodeActivity.isProcessingComplete)) ? (
                             // During streaming: show shrinked (150px) by default, expandable to 300px
                             <>
                               {/* Header with expand/collapse button */}
@@ -455,8 +490,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                               >
                                 <div className="flex items-center gap-2">
                                   <LoaderCircle className="h-5 w-5 animate-spin" />
-                                  <span className="text-sm font-semibold opacity-80">Thinking</span>
-                                  <span className="text-xs opacity-60">({message.reasoning.length} chars)</span>
+                                  <span className="text-sm font-semibold opacity-80">Processing</span>
                                 </div>
                                 {expandedThinking.has(message.id) ? (
                                   <ChevronUp className="h-5 w-5" />
@@ -465,13 +499,12 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                                 )}
                               </Button>
 
-                              {/* Thinking content - shrinked (150px) by default, or expanded (300px) */}
+                              {/* Processing content - shrinked (150px) by default, or expanded (300px) */}
                               <div className="relative w-full">
                                 <ScrollArea
                                   className={expandedThinking.has(message.id) ? "h-[300px] w-full" : "h-[150px] w-full"}
                                   ref={(el) => {
                                     if (el) {
-                                      // Find the viewport element within the ScrollArea
                                       const viewport = el.querySelector('[data-radix-scroll-area-viewport]')
                                       if (viewport) {
                                         thinkingScrollRefs.current.set(message.id, viewport)
@@ -480,7 +513,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                                   }}
                                 >
                                   <div className="text-sm opacity-70 whitespace-pre-wrap break-words font-mono pr-3">
-                                    {message.reasoning}
+                                    {message.reasoning || (opencodeActivity && opencodeActivity.processingText) || ''}
                                   </div>
                                 </ScrollArea>
                               </div>
@@ -494,8 +527,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                                 onClick={() => handleToggleThinking(message.id)}
                               >
                                 <div className="flex items-center gap-2">
-                                  <span className="text-sm font-semibold opacity-80">Thinking</span>
-                                  <span className="text-xs opacity-60">({message.reasoning.length} chars)</span>
+                                  <span className="text-sm font-semibold opacity-80">Processing</span>
                                 </div>
                                 {expandedThinking.has(message.id) ? (
                                   <ChevronUp className="h-5 w-5" />
@@ -504,18 +536,56 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                                 )}
                               </Button>
 
-                              {/* Thinking content - only shown when expanded */}
+                              {/* Processing content - only shown when expanded */}
                               {expandedThinking.has(message.id) && (
                                 <div className="relative w-full">
                                   <ScrollArea className="h-[300px] w-full">
                                     <div className="text-sm opacity-70 whitespace-pre-wrap break-words font-mono pr-3">
-                                      {message.reasoning}
+                                      {message.reasoning || (opencodeActivity && opencodeActivity.processingText) || ''}
                                     </div>
                                   </ScrollArea>
                                 </div>
                               )}
                             </>
                           )}
+                        </div>
+                      ) : null}
+
+                      {/* Permission Request UI - only for last message */}
+                      {message.role === 'assistant' && isLastMessage && opencodeActivity && opencodeActivity.pendingPermission && (
+                        <div className="mb-3 p-3 border border-border rounded-lg bg-muted">
+                          <div className="text-sm font-semibold mb-2">Permission Required</div>
+                          <div className="text-sm mb-3">
+                            <div className="font-mono text-xs opacity-70">
+                              {opencodeActivity.pendingPermission.permission}: {opencodeActivity.pendingPermission.patterns?.join(', ')}
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePermissionResponse(opencodeActivity.pendingPermission.id, 'once')}
+                              className="hover:bg-accent"
+                            >
+                              Allow Once
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePermissionResponse(opencodeActivity.pendingPermission.id, 'always')}
+                              className="hover:bg-accent"
+                            >
+                              Always Allow
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePermissionResponse(opencodeActivity.pendingPermission.id, 'reject')}
+                              className="hover:bg-accent"
+                            >
+                              Deny
+                            </Button>
+                          </div>
                         </div>
                       )}
 
@@ -704,6 +774,18 @@ const arePropsEqual = (prevProps, nextProps) => {
     if (prevLast.content !== nextLast.content) return false
     if (prevLast.reasoning !== nextLast.reasoning) return false
     if (prevLast.isReasoningComplete !== nextLast.isReasoningComplete) return false
+
+    // Check if OpenCode activity changed for last message
+    if (prevProps.getOpencodeActivity && nextProps.getOpencodeActivity) {
+      const prevActivity = prevProps.getOpencodeActivity(nextLast.id)
+      const nextActivity = nextProps.getOpencodeActivity(nextLast.id)
+
+      // Compare key properties that affect rendering
+      if (prevActivity.isActive !== nextActivity.isActive) return false
+      if (prevActivity.processingText !== nextActivity.processingText) return false
+      if (prevActivity.pendingPermission !== nextActivity.pendingPermission) return false
+      if (prevActivity.isProcessingComplete !== nextActivity.isProcessingComplete) return false
+    }
   }
 
   // Props are equal, skip re-render

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, useMemo } from 
 import { conversations as conversationStorage, isElectron } from '@/lib/electron'
 import { v4 as uuidv4 } from 'uuid'
 import { STREAMING_CONSTANTS } from '@/constants/streaming'
+import { cleanupSession } from '@/services/chat/adapters/openCodeAdapter'
 
 const ConversationContext = createContext(null)
 
@@ -10,6 +11,7 @@ export function ConversationProvider({ children }) {
   const [currentConversationId, setCurrentConversationId] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [streamingConversationIds, setStreamingConversationIds] = useState(new Set())
+  const [opencodeActivity, setOpencodeActivity] = useState(new Map()) // Map of messageId -> { isActive, currentAction, events, processingText, etc }
   const saveOperationsRef = useRef(new Map()) // Map of conversationId -> { timeout, cancelled } for debounced saves
   const initializedRef = useRef(false) // Prevent duplicate initialization in React Strict Mode
   const abortControllersRef = useRef(new Map()) // Map of conversationId -> AbortController
@@ -515,6 +517,18 @@ export function ConversationProvider({ children }) {
       console.log('ConversationContext: File deletion successful')
     }
 
+    // Cleanup OpenCode session if this conversation used OpenCode provider
+    const conversation = conversations.find(c => c.id === conversationId)
+    if (conversation && conversation.provider === 'opencode') {
+      try {
+        await cleanupSession(conversationId)
+        console.log('ConversationContext: OpenCode session cleaned up')
+      } catch (error) {
+        console.error('ConversationContext: Failed to cleanup OpenCode session:', error)
+        // Continue with deletion even if OpenCode cleanup fails
+      }
+    }
+
     // Stop streaming if conversation was streaming
     if (isConversationStreaming(conversationId)) {
       stopStreaming(conversationId)
@@ -560,6 +574,85 @@ export function ConversationProvider({ children }) {
   // Get conversation by ID (avoids stale closure issues by using ref)
   const getConversationById = (conversationId) => {
     return conversationsRef.current.find(c => c.id === conversationId)
+  }
+
+  // OpenCode activity management (per message)
+  const addOpencodeEvent = (messageId, event) => {
+    setOpencodeActivity(prev => {
+      const next = new Map(prev)
+      const activity = next.get(messageId) || { isActive: false, currentAction: null, events: [] }
+
+      // Add event to the beginning of array (newest first)
+      const updatedEvents = [event, ...activity.events].slice(0, 50) // Keep last 50 events
+
+      next.set(messageId, {
+        ...activity,
+        events: updatedEvents
+      })
+
+      return next
+    })
+  }
+
+  const setOpencodeStatus = (messageId, status) => {
+    console.log('🔵 setOpencodeStatus called:', messageId, status)
+    setOpencodeActivity(prev => {
+      const next = new Map(prev)
+      const activity = next.get(messageId) || { isActive: false, currentAction: null, events: [] }
+
+      const updated = {
+        ...activity,
+        ...status
+      }
+
+      console.log('🔵 Updated activity:', updated)
+      next.set(messageId, updated)
+
+      return next
+    })
+  }
+
+  const clearOpencodeActivity = (messageId) => {
+    setOpencodeActivity(prev => {
+      const next = new Map(prev)
+      next.delete(messageId)
+      return next
+    })
+  }
+
+  const getOpencodeActivity = (messageId) => {
+    const activity = opencodeActivity.get(messageId)
+    // Return a new object to ensure React detects changes
+    return activity ? { ...activity } : { isActive: false, currentAction: null, events: [], processingText: '', pendingPermission: null, isProcessingComplete: false }
+  }
+
+  const setOpencodePendingPermission = (messageId, permission) => {
+    setOpencodeActivity(prev => {
+      const next = new Map(prev)
+      const activity = next.get(messageId) || { isActive: false, currentAction: null, events: [], processingText: '', pendingPermission: null }
+
+      next.set(messageId, {
+        ...activity,
+        pendingPermission: permission
+      })
+
+      return next
+    })
+  }
+
+  const setOpencodeProcessingText = (messageId, text) => {
+    console.log('🔵 setOpencodeProcessingText called:', messageId, text.substring(0, 100))
+    setOpencodeActivity(prev => {
+      const next = new Map(prev)
+      const activity = next.get(messageId) || { isActive: false, currentAction: null, events: [], processingText: '' }
+
+      next.set(messageId, {
+        ...activity,
+        processingText: text
+      })
+
+      return next
+    })
   }
 
   // Replace all messages in the current conversation (for editing)
@@ -661,7 +754,14 @@ export function ConversationProvider({ children }) {
     getCurrentConversation,
     getConversationById,
     replaceMessages,
-    deleteMessage
+    deleteMessage,
+    // OpenCode activity
+    addOpencodeEvent,
+    setOpencodeStatus,
+    clearOpencodeActivity,
+    getOpencodeActivity,
+    setOpencodeProcessingText,
+    setOpencodePendingPermission
   }
 
   return (

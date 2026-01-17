@@ -1,15 +1,30 @@
 // Electron main process
-// Note: This file uses CommonJS (.cjs) to ensure compatibility with Electron's module system
+// Note: This file uses ES modules (.mjs) for compatibility with @opencode-ai/sdk
 
-const path = require('path')
-const fs = require('fs/promises')
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { dirname } from 'path'
+import fs from 'fs/promises'
+import os from 'os'
+
+// ES module polyfills for __dirname and __filename
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+// OpenCode SDK integration
+import { createOpencodeClient } from '@opencode-ai/sdk'
+import { spawn } from 'child_process'
+let opencodeClient = null
+let opencodeServer = null
+const opencodeSessions = new Map() // conversationId → { sessionId, eventStream }
+const permissionToSession = new Map() // permissionID → sessionId
 
 // Import Electron modules
 // When running in Electron context, these should be available
 let app, BrowserWindow, ipcMain, dialog, shell, safeStorage
 
 try {
-  const electron = require('electron')
+  const electron = await import('electron')
 
   // Check if we got the actual Electron API or just a path string
   if (typeof electron === 'string') {
@@ -19,7 +34,7 @@ try {
     process.exit(1)
   }
 
-  ({ app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = electron)
+  ({ app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = electron.default || electron)
 
   if (!app || !BrowserWindow) {
     console.error('ERROR: Electron modules not properly loaded')
@@ -42,7 +57,7 @@ let showWindowTimeout = null
 function isWindows11() {
   if (process.platform !== 'win32') return false
 
-  const osRelease = require('os').release()
+  const osRelease = os.release()
   const buildNumber = parseInt(osRelease.split('.')[2] || '0')
 
   // Windows 11 starts at build 22000
@@ -59,7 +74,7 @@ function createWindow() {
     show: false,  // Don't show until app is ready (prevents blank screen)
     backgroundColor: '#F9F9F9',  // Match app background
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -172,6 +187,250 @@ function createWindow() {
   })
 }
 
+// ===== OpenCode SDK Functions =====
+
+// Custom function to start OpenCode server
+async function startOpencodeServer(options = {}) {
+  const hostname = options.hostname || '127.0.0.1'
+  const port = options.port || 4096
+  const timeout = options.timeout || 5000
+
+  // Use the node wrapper script directly on Windows
+  const opencodeBinary = process.platform === 'win32'
+    ? path.join(process.cwd(), 'node_modules', 'opencode-ai', 'bin', 'opencode.cmd')
+    : path.join(process.cwd(), 'node_modules', 'opencode-ai', 'bin', 'opencode')
+
+  console.log('🔵 Using OpenCode binary:', opencodeBinary)
+
+  const args = ['serve', `--hostname=${hostname}`, `--port=${port}`]
+
+  // Spawn the server process
+  const proc = spawn(opencodeBinary, args, {
+    shell: true, // Important for Windows .cmd files
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config || {})
+    }
+  })
+
+  // Wait for server to start
+  const url = await new Promise((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(`Timeout waiting for server to start after ${timeout}ms`))
+    }, timeout)
+
+    let output = ''
+    proc.stdout?.on('data', (chunk) => {
+      output += chunk.toString()
+      console.log('OpenCode stdout:', chunk.toString())
+      const lines = output.split('\n')
+      for (const line of lines) {
+        if (line.includes('opencode server listening')) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
+          if (match) {
+            clearTimeout(id)
+            resolve(match[1])
+            return
+          }
+        }
+      }
+    })
+
+    proc.stderr?.on('data', (chunk) => {
+      output += chunk.toString()
+      console.error('OpenCode stderr:', chunk.toString())
+    })
+
+    proc.on('exit', (code) => {
+      clearTimeout(id)
+      reject(new Error(`Server exited with code ${code}\nOutput: ${output}`))
+    })
+
+    proc.on('error', (error) => {
+      clearTimeout(id)
+      reject(error)
+    })
+  })
+
+  return {
+    url,
+    process: proc,
+    close() {
+      proc.kill()
+    }
+  }
+}
+
+// Kill any existing OpenCode processes (cleanup from previous crashes)
+async function killExistingOpenCodeProcesses() {
+  try {
+    console.log('🔵 Checking for existing OpenCode processes...')
+
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
+
+    if (process.platform === 'win32') {
+      // Windows: Kill by process name AND by port
+
+      // Method 1: Try to kill by process name
+      try {
+        await execAsync('taskkill /F /IM opencode.exe 2>&1')
+        console.log('✓ Killed existing OpenCode processes by name')
+      } catch (error) {
+        // No processes found - this is okay
+      }
+
+      // Method 2: Kill by port (more reliable for zombies)
+      console.log('🔵 Checking ports for zombie processes...')
+      for (const port of [4096, 4097, 4098, 4099]) {
+        try {
+          const netstatResult = await execAsync(`netstat -ano | findstr ":${port}"`)
+          const lines = netstatResult.stdout.split('\n')
+          console.log(`🔵 Port ${port} netstat result:`, lines.length, 'lines')
+
+          for (const line of lines) {
+            if (line.includes('LISTENING')) {
+              const parts = line.trim().split(/\s+/)
+              const pid = parts[parts.length - 1]
+              console.log(`🔵 Found process ${pid} on port ${port}`)
+
+              if (pid && pid !== '0' && !isNaN(pid)) {
+                try {
+                  // Use /F instead of //F to avoid escaping issues
+                  await execAsync(`taskkill /F /PID ${pid}`)
+                  console.log(`✓ Killed process ${pid} occupying port ${port}`)
+                } catch (killError) {
+                  console.log(`⚠ Could not kill PID ${pid}:`, killError.message)
+                }
+              }
+            }
+          }
+        } catch (netstatError) {
+          // Port not in use - this is fine
+          console.log(`✓ Port ${port} is free`)
+        }
+      }
+
+      // Wait for ports to be released
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      console.log('✓ Waited for port release')
+    } else {
+      // Unix: Use pkill
+
+      try {
+        await execAsync('pkill -9 opencode')
+        console.log('✓ Killed existing OpenCode processes')
+        // Wait a bit for processes to fully terminate
+        await new Promise(resolve => setTimeout(resolve, 500))
+      } catch (error) {
+        if (error.code === 1) {
+          console.log('✓ No existing OpenCode processes to clean up')
+        } else {
+          console.warn('Warning killing processes:', error.message)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to kill existing OpenCode processes:', error)
+  }
+}
+
+// Initialize OpenCode server and client
+async function initializeOpenCode() {
+  try {
+    console.log('🔵 Starting OpenCode initialization...')
+    console.log('🔵 Working directory:', process.cwd())
+
+    // Kill any zombie processes first
+    await killExistingOpenCodeProcesses()
+
+    // Try to start server, retrying with different ports if needed
+    let server = null
+    let lastError = null
+    const ports = [4096, 4097, 4098, 4099]
+
+    for (const port of ports) {
+      try {
+        console.log(`🔵 Attempting to start OpenCode server on port ${port}...`)
+        server = await startOpencodeServer({
+          hostname: '127.0.0.1',
+          port: port,
+          timeout: 10000
+        })
+        console.log(`✅ OpenCode server started successfully on port ${port}`)
+        break
+      } catch (error) {
+        console.log(`❌ Failed to start on port ${port}:`, error.message)
+        lastError = error
+        // Continue to next port
+      }
+    }
+
+    if (!server) {
+      throw lastError || new Error('Failed to start OpenCode server on any port')
+    }
+
+    opencodeServer = server
+
+    // Create client to connect to the server
+    opencodeClient = createOpencodeClient({
+      baseUrl: server.url
+    })
+
+    console.log('✅✅✅ OpenCode server and client initialized ✅✅✅')
+    console.log(`✅ OpenCode server running (PID: ${opencodeServer?.pid || 'N/A'})`)
+    console.log('🔵 Server object:', opencodeServer ? 'exists' : 'null')
+    console.log('🔵 Client object:', opencodeClient ? 'exists' : 'null')
+    return true
+  } catch (error) {
+    console.error('❌❌❌ Failed to initialize OpenCode ❌❌❌')
+    console.error('Error:', error)
+    console.error('Error message:', error.message)
+    console.error('Error stack:', error.stack)
+    return false
+  }
+}
+
+// Process OpenCode event stream
+async function processEventStream(conversationId, sessionId, eventStream) {
+  try {
+    console.log(`🔵 Started event stream processing for session ${sessionId}`)
+    for await (const event of eventStream.stream) {
+      console.log(`🔵 OpenCode event received:`, event.type, event)
+
+      // Track permission to session mapping
+      if (event.type === 'permission.asked' && event.properties?.id) {
+        permissionToSession.set(event.properties.id, sessionId)
+        console.log(`🔵 Mapped permission ${event.properties.id} to session ${sessionId}`)
+      }
+
+      // Forward events to renderer process
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('opencode:event', {
+          conversationId,
+          sessionId,
+          event
+        })
+      }
+    }
+    console.log(`🔵 Event stream ended for session ${sessionId}`)
+  } catch (error) {
+    console.error('Event stream error:', error)
+    // Notify renderer of stream error
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('opencode:event', {
+        conversationId,
+        sessionId,
+        event: {
+          type: 'error',
+          properties: { error: error.message }
+        }
+      })
+    }
+  }
+}
+
 // Apply VS Code performance optimizations
 // Disable native window occlusion tracker for better animation performance
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
@@ -197,6 +456,12 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // Initialize OpenCode SDK (await to ensure cleanup completes before starting)
+  initializeOpenCode().catch(err => {
+    console.error('Failed to initialize OpenCode:', err)
+    // App continues to work, just without OpenCode
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -204,7 +469,61 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('window-all-closed', () => {
+// Cleanup function for OpenCode
+async function cleanupOpenCode() {
+  console.log('🔵 Cleaning up OpenCode...')
+
+  // Clean up sessions
+  if (opencodeClient && opencodeSessions.size > 0) {
+    console.log('Cleaning up OpenCode sessions...')
+    for (const [conversationId, sessionData] of opencodeSessions.entries()) {
+      try {
+        // Delete session
+        await opencodeClient.session.delete({
+          path: { id: sessionData.sessionId }
+        })
+      } catch (error) {
+        console.error(`Failed to cleanup session ${sessionData.sessionId}:`, error)
+      }
+    }
+    opencodeSessions.clear()
+    console.log('✓ OpenCode sessions cleaned up')
+  }
+
+  // Stop OpenCode server process
+  if (opencodeServer) {
+    try {
+      console.log('Stopping OpenCode server...')
+      if (opencodeServer.process) {
+        // Kill the process forcefully
+        opencodeServer.process.kill('SIGTERM')
+
+        // If it doesn't die after 2 seconds, force kill
+        setTimeout(() => {
+          if (opencodeServer.process && !opencodeServer.process.killed) {
+            console.log('Force killing OpenCode server...')
+            opencodeServer.process.kill('SIGKILL')
+          }
+        }, 2000)
+      }
+      if (opencodeServer.close) {
+        opencodeServer.close()
+      }
+      console.log('✓ OpenCode server stopped')
+    } catch (error) {
+      console.error('Failed to stop OpenCode server:', error)
+    }
+  }
+}
+
+// Cleanup OpenCode sessions and server on app quit
+app.on('before-quit', async () => {
+  await cleanupOpenCode()
+})
+
+// Also cleanup when window is closed (belt and suspenders)
+app.on('window-all-closed', async () => {
+  await cleanupOpenCode()
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -589,6 +908,189 @@ ipcMain.handle('app:ready', () => {
   if (mainWindow && !mainWindow.isVisible()) {
     mainWindow.show()
     console.log('Window shown after app:ready signal')
+  }
+})
+
+// ===== OpenCode IPC Handlers =====
+
+// Create OpenCode session for a conversation
+ipcMain.handle('opencode:createSession', async (event, conversationId) => {
+  if (!opencodeClient) {
+    return { success: false, error: 'OpenCode client not initialized' }
+  }
+
+  try {
+    // Create session with optional title
+    const sessionResponse = await opencodeClient.session.create({
+      body: { title: `Chat ${conversationId.substring(0, 8)}` }
+    })
+
+    console.log('🔵 Session create response:', JSON.stringify(sessionResponse, null, 2))
+
+    // Extract session ID from response (could be in data or response)
+    const sessionId = sessionResponse.data?.id || sessionResponse.id || sessionResponse.data?.sessionID || sessionResponse.sessionID
+
+    if (!sessionId) {
+      console.error('❌ No session ID in response:', sessionResponse)
+      return { success: false, error: 'Failed to get session ID from response' }
+    }
+
+    // Start event stream for this session
+    const eventStream = await opencodeClient.event.subscribe()
+
+    opencodeSessions.set(conversationId, {
+      sessionId: sessionId,
+      eventStream: eventStream
+    })
+
+    // Process events in background
+    processEventStream(conversationId, sessionId, eventStream)
+
+    console.log(`✓ OpenCode session created for conversation ${conversationId}: ${sessionId}`)
+    return { success: true, sessionId: sessionId }
+  } catch (error) {
+    console.error('Failed to create OpenCode session:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// Send message to OpenCode session
+ipcMain.handle('opencode:sendMessage', async (event, { conversationId, message, providerId, modelId }) => {
+  if (!opencodeClient) {
+    return { success: false, error: 'OpenCode client not initialized' }
+  }
+
+  const sessionData = opencodeSessions.get(conversationId)
+  if (!sessionData) {
+    return { success: false, error: 'No OpenCode session for this conversation' }
+  }
+
+  try {
+    // Send prompt to session using the user's selected provider and model
+    console.log('🔵 OpenCode sendMessage called with:', {
+      conversationId,
+      providerId,
+      modelId,
+      messagePreview: message.substring(0, 50)
+    })
+
+    // Use the user's selected provider and model directly
+    // OpenCode handles provider routing internally
+    const promptBody = {
+      model: {
+        providerID: providerId,
+        modelID: modelId
+      },
+      parts: [{ type: 'text', text: message }]
+    }
+
+    const promptOptions = {
+      path: { id: sessionData.sessionId },
+      body: promptBody
+    }
+
+    console.log('🔵 Sending to OpenCode with options:', JSON.stringify(promptOptions, null, 2))
+
+    const response = await opencodeClient.session.prompt(promptOptions)
+
+    console.log(`✓ Message sent to OpenCode session ${sessionData.sessionId} using ${providerId}/${modelId}`)
+    console.log('🔵 OpenCode response:', response)
+
+    // Check if response has error
+    if (response.error) {
+      console.error('❌ OpenCode returned error:', JSON.stringify(response.error, null, 2))
+      return { success: false, error: JSON.stringify(response.error) }
+    }
+
+    return { success: true, response }
+  } catch (error) {
+    console.error('Failed to send OpenCode message:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// Abort OpenCode session (stop current generation)
+ipcMain.handle('opencode:abortSession', async (event, conversationId) => {
+  const sessionData = opencodeSessions.get(conversationId)
+  if (!sessionData) {
+    return { success: true }
+  }
+
+  try {
+    // Note: OpenCode SDK doesn't have an explicit abort method
+    // The session can just be left as-is or deleted
+    console.log(`✓ OpenCode session aborted (no-op): ${sessionData.sessionId}`)
+    return { success: true }
+  } catch (error) {
+    console.error('Failed to abort OpenCode session:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// Delete OpenCode session
+ipcMain.handle('opencode:deleteSession', async (event, conversationId) => {
+  const sessionData = opencodeSessions.get(conversationId)
+  if (!sessionData) {
+    return { success: true }
+  }
+
+  try {
+    // Delete session using correct API
+    await opencodeClient.session.delete({
+      path: { id: sessionData.sessionId }
+    })
+    opencodeSessions.delete(conversationId)
+
+    console.log(`✓ OpenCode session deleted: ${sessionData.sessionId}`)
+    return { success: true }
+  } catch (error) {
+    console.error('Failed to delete OpenCode session:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// Get OpenCode session status
+ipcMain.handle('opencode:getSessionStatus', async (event, conversationId) => {
+  const sessionData = opencodeSessions.get(conversationId)
+  return {
+    exists: !!sessionData,
+    sessionId: sessionData?.sessionId
+  }
+})
+
+// Respond to OpenCode permission request
+ipcMain.handle('opencode:respondPermission', async (event, { requestID, reply, directory }) => {
+  if (!opencodeClient) {
+    return { success: false, error: 'OpenCode client not initialized' }
+  }
+
+  // Find which session this permission belongs to
+  const sessionId = permissionToSession.get(requestID)
+
+  if (!sessionId) {
+    console.error('❌ No session found for permission ID:', requestID)
+    return { success: false, error: 'No session found for this permission request' }
+  }
+
+  try {
+    console.log('🔵 Responding to permission:', { sessionId, requestID, reply, directory })
+
+    const response = await opencodeClient.postSessionIdPermissionsPermissionId({
+      path: {
+        id: sessionId,
+        permissionID: requestID
+      },
+      body: {
+        response: reply // "once", "always", or "reject"
+      },
+      query: directory ? { directory } : undefined
+    })
+
+    console.log('✓ Permission response sent:', response)
+    return { success: true, response }
+  } catch (error) {
+    console.error('Failed to respond to permission:', error)
+    return { success: false, error: error.message }
   }
 })
 

@@ -1,4 +1,5 @@
-const { contextBridge, ipcRenderer } = require('electron')
+import { contextBridge, ipcRenderer } from 'electron'
+import os from 'os'
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -61,9 +62,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // OS version detection for conditional UI rendering
   isWindows11: () => {
     if (process.platform !== 'win32') return false
-    const os = require('os')
     const buildNumber = parseInt(os.release().split('.')[2] || '0')
     return buildNumber >= 22000
+  },
+
+  // OpenCode SDK operations
+  opencode: {
+    createSession: (conversationId) =>
+      ipcRenderer.invoke('opencode:createSession', conversationId),
+
+    sendMessage: (conversationId, message, providerId, modelId) =>
+      ipcRenderer.invoke('opencode:sendMessage', { conversationId, message, providerId, modelId }),
+
+    abortSession: (conversationId) =>
+      ipcRenderer.invoke('opencode:abortSession', conversationId),
+
+    deleteSession: (conversationId) =>
+      ipcRenderer.invoke('opencode:deleteSession', conversationId),
+
+    getSessionStatus: (conversationId) =>
+      ipcRenderer.invoke('opencode:getSessionStatus', conversationId),
+
+    respondPermission: (requestID, reply, directory, message) =>
+      ipcRenderer.invoke('opencode:respondPermission', { requestID, reply, directory, message }),
+
+    onEvent: (callback) => {
+      const subscription = (event, data) => callback(data)
+      ipcRenderer.on('opencode:event', subscription)
+      // Return cleanup function
+      return () => ipcRenderer.removeListener('opencode:event', subscription)
+    }
   }
 })
 

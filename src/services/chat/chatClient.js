@@ -6,6 +6,7 @@
 import * as openAIAdapter from './adapters/openAIAdapter'
 import * as geminiAdapter from './adapters/geminiAdapter'
 import * as anthropicAdapter from './adapters/anthropicAdapter'
+import * as openCodeAdapter from './adapters/openCodeAdapter'
 import { getProviderById } from '@/config/providers'
 
 /**
@@ -20,6 +21,8 @@ import { getProviderById } from '@/config/providers'
  * @param {Function} params.onComplete - Callback when streaming completes (fullContent)
  * @param {Function} params.onError - Callback for errors (error)
  * @param {AbortSignal} params.abortSignal - Signal to abort the request
+ * @param {string} params.conversationId - Conversation ID
+ * @param {boolean} params.useOpenCode - Whether to route through OpenCode SDK
  */
 export async function sendStreamingMessage({
   providerId,
@@ -34,8 +37,34 @@ export async function sendStreamingMessage({
   onError,
   abortSignal,
   modalities = null, // For image generation: ['image', 'text']
-  reasoning = null // For thinking models: { effort: 'high' }
+  reasoning = null, // For thinking models: { effort: 'high' }
+  conversationId = null,
+  useOpenCode = false, // Whether to use OpenCode autonomous mode
+  addOpencodeEvent = null, // Callback to add OpenCode events
+  setOpencodeStatus = null, // Callback to set OpenCode status
+  clearOpencodeActivity = null, // Callback to clear OpenCode activity
+  setOpencodeProcessingText = null, // Callback to set OpenCode processing text
+  setOpencodePendingPermission = null // Callback to set pending permission
 }) {
+  // If OpenCode is enabled, route through OpenCode adapter
+  if (useOpenCode) {
+    return await openCodeAdapter.sendStreamingMessage({
+      providerId, // Pass the actual provider to OpenCode
+      model,
+      messages,
+      onChunk,
+      onComplete,
+      onError,
+      abortSignal,
+      conversationId,
+      addOpencodeEvent,
+      setOpencodeStatus,
+      clearOpencodeActivity,
+      setOpencodeProcessingText,
+      setOpencodePendingPermission
+    })
+  }
+
   // Validate inputs
   if (!apiKey) {
     onError(new Error('API key is required'))
