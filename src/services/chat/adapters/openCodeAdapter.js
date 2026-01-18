@@ -371,12 +371,44 @@ export async function sendStreamingMessage({
     // Create session if doesn't exist (lazy creation)
     if (!status.exists) {
       console.log('🔵 Creating new OpenCode session for conversation:', conversationId)
-      const result = await window.electronAPI.opencode.createSession(conversationId)
+
+      // Get working directory from conversation (need to access from context or storage)
+      let workingDirectory = null
+      try {
+        const appDataPath = await window.electronAPI.getAppDataPath()
+        // Get conversation data to find working directory
+        const conversationPath = `${appDataPath}\\conversations\\${conversationId}.json`
+        const conversations = await window.electronAPI.fs.readFile(conversationPath)
+        if (conversations.success && conversations.data) {
+          const conversation = JSON.parse(conversations.data)
+          workingDirectory = conversation?.workingDirectory?.path || null
+          console.log('🔵 Found working directory in conversation:', workingDirectory)
+        }
+      } catch (error) {
+        console.warn('Could not read conversation working directory, using default:', error.message)
+      }
+
+      // If no working directory set, ensure isolated workspace exists
+      if (!workingDirectory) {
+        const appDataPath = await window.electronAPI.getAppDataPath()
+        // Use Windows path separator for consistency
+        workingDirectory = `${appDataPath}\\userfiles\\workspaces\\${conversationId}`
+        console.log('🔵 Creating isolated workspace:', workingDirectory)
+        const ensureResult = await window.electronAPI.workspace.ensureDirectory(conversationId)
+        if (ensureResult.success) {
+          workingDirectory = ensureResult.path
+        }
+      }
+
+      console.log('🔵 Using working directory:', workingDirectory)
+
+      const result = await window.electronAPI.opencode.createSession(conversationId, workingDirectory)
       if (!result.success) {
         throw new Error(result.error || 'Failed to create OpenCode session')
       }
       sessionCreated = true
       console.log('✓ OpenCode session created:', result.sessionId)
+      console.log('✓ Session directory:', result.directory)
     } else {
       console.log('🔵 Reusing existing OpenCode session for conversation:', conversationId)
     }

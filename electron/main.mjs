@@ -189,6 +189,65 @@ function createWindow() {
 
 // ===== OpenCode SDK Functions =====
 
+// Ensure workspace directory exists for a conversation
+async function ensureWorkspaceDirectory(conversationId) {
+  const workspacePath = path.join(
+    app.getPath('userData'),
+    'userfiles',
+    'workspaces',
+    conversationId
+  )
+
+  // Create directory if doesn't exist
+  await fs.mkdir(workspacePath, { recursive: true })
+
+  // Create a README to explain what this folder is
+  const readmePath = path.join(workspacePath, 'README.md')
+
+  try {
+    await fs.access(readmePath)
+    // README exists, don't overwrite
+  } catch {
+    // README doesn't exist, create it
+    await fs.writeFile(readmePath,
+      '# Safe Workspace\n\n' +
+      'This folder is a safe workspace for your conversation.\n' +
+      'Files created by OpenCode will be stored here.\n\n' +
+      'You can link this conversation to a real project folder using the "Link to Folder" button.\n'
+    )
+  }
+
+  return workspacePath
+}
+
+// Delete workspace directory recursively
+async function deleteWorkspaceDirectory(workspacePath) {
+  try {
+    // Safety check: only delete if path is within userfiles/workspaces
+    const userDataPath = app.getPath('userData')
+    const workspacesBasePath = path.join(userDataPath, 'userfiles', 'workspaces')
+
+    // Normalize paths for comparison
+    const normalizedWorkspace = path.normalize(workspacePath)
+    const normalizedBase = path.normalize(workspacesBasePath)
+
+    // Ensure workspace path is actually inside workspaces directory
+    if (!normalizedWorkspace.startsWith(normalizedBase)) {
+      console.error('❌ Attempted to delete directory outside of workspaces:', workspacePath)
+      throw new Error('Cannot delete directory outside of workspace folder')
+    }
+
+    // Delete directory recursively
+    await fs.rm(workspacePath, { recursive: true, force: true })
+    console.log('✓ Deleted workspace directory:', workspacePath)
+
+    return true
+  } catch (error) {
+    console.error('Failed to delete workspace directory:', error)
+    throw error
+  }
+}
+
 // Custom function to start OpenCode server
 async function startOpencodeServer(options = {}) {
   const hostname = options.hostname || '127.0.0.1'
@@ -656,6 +715,55 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
   }
 })
 
+// Show directory selection dialog
+ipcMain.handle('dialog:selectDirectory', async (event) => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory', 'createDirectory'],
+      title: 'Select Working Directory',
+      buttonLabel: 'Select Folder'
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: true, canceled: true, filePath: null }
+    }
+
+    return { success: true, canceled: false, filePath: result.filePaths[0] }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Ensure workspace directory exists
+ipcMain.handle('workspace:ensureDirectory', async (event, conversationId) => {
+  try {
+    const workspacePath = await ensureWorkspaceDirectory(conversationId)
+    return { success: true, path: workspacePath }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Delete workspace directory
+ipcMain.handle('workspace:deleteDirectory', async (event, workspacePath) => {
+  try {
+    await deleteWorkspaceDirectory(workspacePath)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Reveal directory in file explorer
+ipcMain.handle('shell:revealInFileExplorer', async (event, filePath) => {
+  try {
+    await shell.showItemInFolder(filePath)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
 // ===== Secure Storage for API Keys =====
 // Using Electron's safeStorage API with Windows DPAPI encryption
 // API keys are encrypted before being written to disk
@@ -914,30 +1022,37 @@ ipcMain.handle('app:ready', () => {
 // ===== OpenCode IPC Handlers =====
 
 // Create OpenCode session for a conversation
-ipcMain.handle('opencode:createSession', async (event, conversationId) => {
+ipcMain.handle('opencode:createSession', async (event, conversationId, workingDirectory) => {
   if (!opencodeClient) {
     return { success: false, error: 'OpenCode client not initialized' }
   }
 
   try {
-    // Create session with optional title
+    console.log(`🔵 Creating OpenCode session for ${conversationId}`)
+
+    // Create session - OpenCode will use the server's starting directory
     const sessionResponse = await opencodeClient.session.create({
       body: { title: `Chat ${conversationId.substring(0, 8)}` }
     })
 
     console.log('🔵 Session create response:', JSON.stringify(sessionResponse, null, 2))
 
-    // Extract session ID from response (could be in data or response)
+    // Extract session ID from response
     const sessionId = sessionResponse.data?.id || sessionResponse.id || sessionResponse.data?.sessionID || sessionResponse.sessionID
+    const sessionDirectory = sessionResponse.data?.directory || workingDirectory
 
     if (!sessionId) {
       console.error('❌ No session ID in response:', sessionResponse)
       return { success: false, error: 'Failed to get session ID from response' }
     }
 
+    console.log(`✓ OpenCode session created: ${sessionId}`)
+    console.log(`✓ Session working directory: ${sessionDirectory}`)
+
     // Start event stream for this session
     const eventStream = await opencodeClient.event.subscribe()
 
+    // Store session info
     opencodeSessions.set(conversationId, {
       sessionId: sessionId,
       eventStream: eventStream
@@ -947,7 +1062,7 @@ ipcMain.handle('opencode:createSession', async (event, conversationId) => {
     processEventStream(conversationId, sessionId, eventStream)
 
     console.log(`✓ OpenCode session created for conversation ${conversationId}: ${sessionId}`)
-    return { success: true, sessionId: sessionId }
+    return { success: true, sessionId: sessionId, directory: sessionDirectory }
   } catch (error) {
     console.error('Failed to create OpenCode session:', error)
     return { success: false, error: error.message }

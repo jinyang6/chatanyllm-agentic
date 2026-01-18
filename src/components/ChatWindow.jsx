@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import MessageList from './MessageList'
 import MessageInput from './MessageInput'
+import { WorkingDirectorySelector } from './WorkingDirectorySelector'
+import { EmptyStatePrompt } from './EmptyStatePrompt'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
@@ -50,6 +52,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
   const {
     messages,
     isConversationStreaming,
+    streamingConversationIds,
     startStreaming,
     stopStreaming,
     addMessage,
@@ -765,19 +768,53 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         </div>
       </div>
 
-      <MessageList
-        messages={messages}
-        onRetry={handleRetry}
-        onEditUserMessage={handleEditUserMessage}
-        onDeleteMessage={deleteMessage}
-        isStreaming={isConversationStreaming(currentConversationId)}
-        getOpencodeActivity={getOpencodeActivity}
+      {/* Main content area - show empty state or messages */}
+      {messages.length === 0 ? (
+        <EmptyStatePrompt conversationId={currentConversationId} />
+      ) : (
+        <MessageList
+          messages={messages}
+          onRetry={handleRetry}
+          onEditUserMessage={handleEditUserMessage}
+          onDeleteMessage={deleteMessage}
+          isStreaming={isConversationStreaming(currentConversationId)}
+          getOpencodeActivity={getOpencodeActivity}
+        />
+      )}
+
+      {/* Working directory selector - shown above input */}
+      <WorkingDirectorySelector
+        conversationId={currentConversationId}
+        className="px-4 py-2 border-t border-border"
       />
-      <MessageInput
-        onSendMessage={handleSendMessage}
-        isStreaming={isConversationStreaming(currentConversationId)}
-        onStopGeneration={handleStopGeneration}
-      />
+
+      {/* Message input */}
+      {(() => {
+        const isCurrentStreaming = isConversationStreaming(currentConversationId)
+        const isAnyOtherStreaming = Array.from(streamingConversationIds).some(id => id !== currentConversationId)
+
+        return (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <MessageInput
+                    onSendMessage={handleSendMessage}
+                    isStreaming={isCurrentStreaming}
+                    onStopGeneration={handleStopGeneration}
+                    disabled={isAnyOtherStreaming}
+                  />
+                </div>
+              </TooltipTrigger>
+              {isAnyOtherStreaming && (
+                <TooltipContent side="top" className="max-w-xs">
+                  <p>Another conversation is currently generating a response. Please wait or switch to that conversation to stop it.</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+        )
+      })()}
     </div>
   )
 }

@@ -142,14 +142,26 @@ export function ConversationProvider({ children }) {
 
   // Create a new conversation (defined before useEffect to avoid hoisting issues)
   const createNewConversation = async () => {
+    const conversationId = uuidv4()
+    const appDataPath = await window.electronAPI.getAppDataPath()
+
+    // Use path.join equivalent for browser - create consistent path separators
+    const workspacePath = isElectron()
+      ? `${appDataPath}\\userfiles\\workspaces\\${conversationId}`
+      : `${appDataPath}/userfiles/workspaces/${conversationId}`
+
     const newConversation = {
-      id: uuidv4(),
+      id: conversationId,
       title: 'New Conversation',
       messages: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       model: null, // Will be set when first message is sent
-      provider: null
+      provider: null,
+      workingDirectory: {
+        type: 'isolated',
+        path: workspacePath
+      }
     }
 
     try {
@@ -166,6 +178,43 @@ export function ConversationProvider({ children }) {
     return newConversation
   }
 
+  // Migration: Add working directory to existing conversations
+  const migrateConversations = async (conversations) => {
+    const appDataPath = await window.electronAPI.getAppDataPath()
+    let needsMigration = false
+
+    const migrated = conversations.map(conv => {
+      if (!conv.workingDirectory) {
+        needsMigration = true
+        // Use consistent path separators
+        const workspacePath = isElectron()
+          ? `${appDataPath}\\userfiles\\workspaces\\${conv.id}`
+          : `${appDataPath}/userfiles/workspaces/${conv.id}`
+        return {
+          ...conv,
+          workingDirectory: {
+            type: 'isolated',
+            path: workspacePath
+          }
+        }
+      }
+      return conv
+    })
+
+    // Save migrated conversations
+    if (needsMigration) {
+      console.log('🔄 Migrating conversations to include working directory...')
+      for (const conversation of migrated) {
+        if (!conversations.find(c => c.id === conversation.id)?.workingDirectory) {
+          await conversationStorage.save(conversation)
+        }
+      }
+      console.log('✓ Migration complete')
+    }
+
+    return migrated
+  }
+
   // Load all conversations on mount
   useEffect(() => {
     // Prevent double initialization in React Strict Mode
@@ -176,8 +225,11 @@ export function ConversationProvider({ children }) {
       try {
         const result = await conversationStorage.list()
         if (result.success && result.conversations.length > 0) {
+          // Migrate conversations if needed
+          const migrated = await migrateConversations(result.conversations)
+
           // Sort by last updated time (most recent first)
-          const sorted = result.conversations.sort((a, b) =>
+          const sorted = migrated.sort((a, b) =>
             new Date(b.updatedAt) - new Date(a.updatedAt)
           )
           setConversations(sorted)
@@ -507,6 +559,10 @@ export function ConversationProvider({ children }) {
   // Delete a conversation
   const deleteConversation = async (conversationId) => {
     console.log('ConversationContext: Starting deletion for:', conversationId)
+
+    // Get conversation before deletion to check working directory
+    const conversation = conversations.find(c => c.id === conversationId)
+
     const result = await conversationStorage.delete(conversationId)
     console.log('ConversationContext: Storage deletion result:', result)
 
@@ -517,8 +573,27 @@ export function ConversationProvider({ children }) {
       console.log('ConversationContext: File deletion successful')
     }
 
+    // Delete isolated workspace directory if this conversation used one
+    if (conversation?.workingDirectory?.type === 'isolated') {
+      try {
+        console.log('ConversationContext: Deleting isolated workspace:', conversation.workingDirectory.path)
+        if (window.electronAPI?.workspace) {
+          const deleteResult = await window.electronAPI.workspace.deleteDirectory(conversation.workingDirectory.path)
+          if (deleteResult.success) {
+            console.log('ConversationContext: Workspace directory deleted successfully')
+          } else {
+            console.error('ConversationContext: Failed to delete workspace directory:', deleteResult.error)
+          }
+        }
+      } catch (error) {
+        console.error('ConversationContext: Failed to delete workspace directory:', error)
+        // Continue with deletion even if workspace cleanup fails
+      }
+    } else if (conversation?.workingDirectory?.type === 'linked') {
+      console.log('ConversationContext: Linked workspace - not deleting user project folder')
+    }
+
     // Cleanup OpenCode session if this conversation used OpenCode provider
-    const conversation = conversations.find(c => c.id === conversationId)
     if (conversation && conversation.provider === 'opencode') {
       try {
         await cleanupSession(conversationId)
@@ -554,9 +629,28 @@ export function ConversationProvider({ children }) {
   }
 
   // Select a conversation
-  const selectConversation = (conversationId) => {
-    // Allow multiple concurrent streams - don't stop streaming when switching
+  const selectConversation = async (conversationId) => {
+    // Only allow switching if no conversation is currently streaming
+    const hasActiveStream = Array.from(streamingConversationIds).length > 0
+    if (hasActiveStream) {
+      console.log('Cannot switch conversations while a message is being generated')
+      return false
+    }
+
+    // Delete the current conversation's OpenCode session before switching
+    // This allows the new conversation to create a session in its own directory
+    if (currentConversationId && window.electronAPI?.opencode) {
+      try {
+        await window.electronAPI.opencode.deleteSession(currentConversationId)
+        console.log('✓ Deleted OpenCode session for previous conversation')
+      } catch (error) {
+        console.error('Failed to delete previous session:', error)
+        // Continue anyway
+      }
+    }
+
     setCurrentConversationId(conversationId)
+    return true
   }
 
   // Start a new conversation
@@ -733,6 +827,58 @@ export function ConversationProvider({ children }) {
     }
   }
 
+  // Working directory management
+  const getWorkingDirectory = (conversationId) => {
+    const conversation = conversations.find(c => c.id === conversationId)
+    return conversation?.workingDirectory || null
+  }
+
+  const updateWorkingDirectory = async (conversationId, newDirectory, type = 'linked') => {
+    const conversation = conversations.find(c => c.id === conversationId)
+    if (!conversation) return
+
+    const updated = {
+      ...conversation,
+      workingDirectory: {
+        type,
+        path: newDirectory
+      },
+      updatedAt: new Date().toISOString()
+    }
+
+    // Update state
+    setConversations(prev =>
+      prev.map(c => c.id === conversationId ? updated : c)
+        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+    )
+
+    // Save to storage
+    try {
+      await conversationStorage.save(updated)
+
+      // If OpenCode session exists, recreate with new directory
+      if (window.electronAPI?.opencode) {
+        const status = await window.electronAPI.opencode.getSessionStatus(conversationId)
+        if (status.exists) {
+          console.log('🔵 Recreating OpenCode session with new directory')
+          await window.electronAPI.opencode.deleteSession(conversationId)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update working directory:', error)
+    }
+  }
+
+  const unlinkWorkingDirectory = async (conversationId) => {
+    const appDataPath = await window.electronAPI.getAppDataPath()
+    // Use consistent path separators
+    const isolatedPath = isElectron()
+      ? `${appDataPath}\\userfiles\\workspaces\\${conversationId}`
+      : `${appDataPath}/userfiles/workspaces/${conversationId}`
+
+    await updateWorkingDirectory(conversationId, isolatedPath, 'isolated')
+  }
+
   const value = {
     conversations,
     currentConversationId,
@@ -755,6 +901,10 @@ export function ConversationProvider({ children }) {
     getConversationById,
     replaceMessages,
     deleteMessage,
+    // Working directory
+    getWorkingDirectory,
+    updateWorkingDirectory,
+    unlinkWorkingDirectory,
     // OpenCode activity
     addOpencodeEvent,
     setOpencodeStatus,

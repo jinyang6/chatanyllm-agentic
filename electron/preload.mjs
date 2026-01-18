@@ -18,7 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Dialog operations
   dialog: {
     openFile: (options) => ipcRenderer.invoke('dialog:openFile', options),
-    saveFile: (options) => ipcRenderer.invoke('dialog:saveFile', options)
+    saveFile: (options) => ipcRenderer.invoke('dialog:saveFile', options),
+    selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory')
   },
 
   // Secure storage
@@ -32,7 +33,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Shell operations
   shell: {
-    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+    revealInFileExplorer: (filePath) => ipcRenderer.invoke('shell:revealInFileExplorer', filePath)
+  },
+
+  // Workspace operations
+  workspace: {
+    ensureDirectory: (conversationId) => ipcRenderer.invoke('workspace:ensureDirectory', conversationId),
+    deleteDirectory: (workspacePath) => ipcRenderer.invoke('workspace:deleteDirectory', workspacePath)
   },
 
   // Window controls
@@ -68,8 +76,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // OpenCode SDK operations
   opencode: {
-    createSession: (conversationId) =>
-      ipcRenderer.invoke('opencode:createSession', conversationId),
+    createSession: (conversationId, workingDirectory) =>
+      ipcRenderer.invoke('opencode:createSession', conversationId, workingDirectory),
 
     sendMessage: (conversationId, message, providerId, modelId) =>
       ipcRenderer.invoke('opencode:sendMessage', { conversationId, message, providerId, modelId }),
