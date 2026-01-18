@@ -184,21 +184,33 @@ export function ConversationProvider({ children }) {
     let needsMigration = false
 
     const migrated = conversations.map(conv => {
+      let updated = { ...conv }
+      let changed = false
+
+      // Add working directory if missing
       if (!conv.workingDirectory) {
         needsMigration = true
-        // Use consistent path separators
+        changed = true
         const workspacePath = isElectron()
           ? `${appDataPath}\\userfiles\\workspaces\\${conv.id}`
           : `${appDataPath}/userfiles/workspaces/${conv.id}`
-        return {
-          ...conv,
-          workingDirectory: {
-            type: 'isolated',
-            path: workspacePath
-          }
+        updated.workingDirectory = {
+          type: 'isolated',
+          path: workspacePath
         }
       }
-      return conv
+      // Fix mixed path separators in existing working directories
+      else if (isElectron() && conv.workingDirectory.path && conv.workingDirectory.path.includes('/')) {
+        needsMigration = true
+        changed = true
+        // Normalize to use backslashes on Windows
+        updated.workingDirectory = {
+          ...conv.workingDirectory,
+          path: conv.workingDirectory.path.replace(/\//g, '\\')
+        }
+      }
+
+      return changed ? updated : conv
     })
 
     // Save migrated conversations
@@ -233,6 +245,24 @@ export function ConversationProvider({ children }) {
             new Date(b.updatedAt) - new Date(a.updatedAt)
           )
           setConversations(sorted)
+
+          // Restore OpenCode activity from persisted messages (using reasoning field)
+          const activityMap = new Map()
+          sorted.forEach(conv => {
+            conv.messages.forEach(msg => {
+              if (msg.reasoning && msg.role === 'assistant') {
+                activityMap.set(msg.id, {
+                  isActive: false,
+                  currentAction: null,
+                  events: [],
+                  processingText: msg.reasoning,
+                  pendingPermission: null,
+                  isProcessingComplete: true
+                })
+              }
+            })
+          })
+          setOpencodeActivity(activityMap)
 
           // Load the most recent conversation
           const mostRecent = sorted[0]
@@ -630,25 +660,8 @@ export function ConversationProvider({ children }) {
 
   // Select a conversation
   const selectConversation = async (conversationId) => {
-    // Only allow switching if no conversation is currently streaming
-    const hasActiveStream = Array.from(streamingConversationIds).length > 0
-    if (hasActiveStream) {
-      console.log('Cannot switch conversations while a message is being generated')
-      return false
-    }
-
-    // Delete the current conversation's OpenCode session before switching
-    // This allows the new conversation to create a session in its own directory
-    if (currentConversationId && window.electronAPI?.opencode) {
-      try {
-        await window.electronAPI.opencode.deleteSession(currentConversationId)
-        console.log('✓ Deleted OpenCode session for previous conversation')
-      } catch (error) {
-        console.error('Failed to delete previous session:', error)
-        // Continue anyway
-      }
-    }
-
+    // Allow switching to view other conversations
+    // Input will be disabled in conversations that aren't streaming
     setCurrentConversationId(conversationId)
     return true
   }
@@ -736,6 +749,8 @@ export function ConversationProvider({ children }) {
 
   const setOpencodeProcessingText = (messageId, text) => {
     console.log('🔵 setOpencodeProcessingText called:', messageId, text.substring(0, 100))
+
+    // Update in-memory activity
     setOpencodeActivity(prev => {
       const next = new Map(prev)
       const activity = next.get(messageId) || { isActive: false, currentAction: null, events: [], processingText: '' }
@@ -746,6 +761,35 @@ export function ConversationProvider({ children }) {
       })
 
       return next
+    })
+
+    // Also save to message reasoning field for persistence
+    setConversations(prev => {
+      const conversation = prev.find(c => c.id === currentConversationId)
+      if (!conversation) return prev
+
+      const updatedMessages = conversation.messages.map(msg => {
+        if (msg.id === messageId) {
+          return {
+            ...msg,
+            reasoning: text
+          }
+        }
+        return msg
+      })
+
+      const updated = {
+        ...conversation,
+        messages: updatedMessages,
+        updatedAt: new Date().toISOString()
+      }
+
+      // Save to storage asynchronously
+      conversationStorage.save(updated).catch(error => {
+        console.error('Failed to save processing text:', error)
+      })
+
+      return prev.map(c => c.id === currentConversationId ? updated : c)
     })
   }
 

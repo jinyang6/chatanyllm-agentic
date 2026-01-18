@@ -793,26 +793,27 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
         const isCurrentStreaming = isConversationStreaming(currentConversationId)
         const isAnyOtherStreaming = Array.from(streamingConversationIds).some(id => id !== currentConversationId)
 
+        // If another conversation is streaming, show disabled input with tooltip on send button
+        if (isAnyOtherStreaming) {
+          return (
+            <MessageInput
+              onSendMessage={handleSendMessage}
+              isStreaming={false}
+              onStopGeneration={handleStopGeneration}
+              disabled={true}
+              disabledTooltip="Another conversation is currently generating a response. Please wait or switch to that conversation to stop it."
+            />
+          )
+        }
+
+        // Normal input for current conversation
         return (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <MessageInput
-                    onSendMessage={handleSendMessage}
-                    isStreaming={isCurrentStreaming}
-                    onStopGeneration={handleStopGeneration}
-                    disabled={isAnyOtherStreaming}
-                  />
-                </div>
-              </TooltipTrigger>
-              {isAnyOtherStreaming && (
-                <TooltipContent side="top" className="max-w-xs">
-                  <p>Another conversation is currently generating a response. Please wait or switch to that conversation to stop it.</p>
-                </TooltipContent>
-              )}
-            </Tooltip>
-          </TooltipProvider>
+          <MessageInput
+            onSendMessage={handleSendMessage}
+            isStreaming={isCurrentStreaming}
+            onStopGeneration={handleStopGeneration}
+            disabled={false}
+          />
         )
       })()}
     </div>

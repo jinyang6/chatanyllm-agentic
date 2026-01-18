@@ -447,11 +447,11 @@ export async function sendStreamingMessage({
       throw new Error('Last message must be from user')
     }
 
-    // If this is a new session (first message), just send the user message
-    // If it's a follow-up (multi-turn), include conversation history as context
+    // Always include conversation history if there are previous messages
+    // This ensures OpenCode has full context regardless of session state
     let userMessage = lastMessage.content
 
-    if (!sessionCreated && messages.length > 1) {
+    if (messages.length > 1) {
       // Multi-turn conversation: Include previous context
       // Format the conversation history for OpenCode
       const conversationHistory = messages.slice(0, -1).map(msg => {
@@ -461,7 +461,7 @@ export async function sendStreamingMessage({
       userMessage = `Previous conversation:\n${conversationHistory}\n\nCurrent message:\n${lastMessage.content}`
       console.log('🔵 Multi-turn conversation detected, including history')
     } else {
-      console.log('🔵 First message in conversation or new session')
+      console.log('🔵 First message in conversation')
     }
 
     console.log('🔵 Sending message to OpenCode session:', userMessage.substring(0, 100))

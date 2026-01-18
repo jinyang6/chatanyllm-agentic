@@ -8,7 +8,7 @@ import { formatFileSize } from '@/utils/messageFormatters'
 import { convertImageToPNG, calculateBase64Size } from '@/utils/imageConverter'
 import { toast } from 'sonner'
 
-function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, disabled = false }) {
+function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, disabled = false, disabledTooltip = null }) {
   const [message, setMessage] = useState('')
   const [attachments, setAttachments] = useState([])
   const textareaRef = useRef(null)
@@ -285,18 +285,24 @@ function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, di
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      type="submit"
-                      size="icon"
-                      disabled={!canSend}
-                      className="h-11 w-11 rounded-lg transition-all disabled:opacity-40 shadow-sm flex-shrink-0"
-                    >
-                      <ArrowUpIcon className="h-5 w-5" />
-                      <span className="sr-only">Send message</span>
-                    </Button>
+                    <span className="inline-block">
+                      <Button
+                        type="submit"
+                        size="icon"
+                        disabled={!canSend}
+                        className="h-11 w-11 rounded-lg transition-all disabled:opacity-40 shadow-sm flex-shrink-0"
+                      >
+                        <ArrowUpIcon className="h-5 w-5" />
+                        <span className="sr-only">Send message</span>
+                      </Button>
+                    </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p className="text-sm">Send message (Enter)</p>
+                    {disabledTooltip && !canSend && disabled ? (
+                      <p className="text-sm text-justify max-w-xs">{disabledTooltip}</p>
+                    ) : (
+                      <p className="text-sm">Send message (Enter)</p>
+                    )}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>

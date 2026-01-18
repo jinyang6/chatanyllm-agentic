@@ -248,11 +248,51 @@ async function deleteWorkspaceDirectory(workspacePath) {
   }
 }
 
+// Find dynamically available port
+async function findAvailablePort(preferredPort = 4096) {
+  const net = await import('net')
+
+  return new Promise((resolve, reject) => {
+    const server = net.default.createServer()
+
+    // Try preferred port first
+    server.listen(preferredPort, () => {
+      const port = server.address().port
+      server.close(() => {
+        console.log(`✓ Port ${port} is available`)
+        resolve(port)
+      })
+    })
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // Port is in use, let OS assign a random available port
+        console.log(`⚠ Port ${preferredPort} is in use, finding alternative...`)
+        const fallbackServer = net.default.createServer()
+        fallbackServer.listen(0, () => { // 0 = OS assigns available port
+          const port = fallbackServer.address().port
+          fallbackServer.close(() => {
+            console.log(`✓ Found available port: ${port}`)
+            resolve(port)
+          })
+        })
+        fallbackServer.on('error', reject)
+      } else {
+        reject(err)
+      }
+    })
+  })
+}
+
 // Custom function to start OpenCode server
 async function startOpencodeServer(options = {}) {
   const hostname = options.hostname || '127.0.0.1'
-  const port = options.port || 4096
-  const timeout = options.timeout || 5000
+  const preferredPort = options.port || 4096
+  const timeout = options.timeout || 10000
+
+  // Find available port dynamically
+  const port = await findAvailablePort(preferredPort)
+  console.log(`🔵 Using port: ${port}`)
 
   // Use the node wrapper script directly on Windows
   const opencodeBinary = process.platform === 'win32'
@@ -320,78 +360,107 @@ async function startOpencodeServer(options = {}) {
   }
 }
 
-// Kill any existing OpenCode processes (cleanup from previous crashes)
-async function killExistingOpenCodeProcesses() {
+// Kill OpenCode process from previous session using PID file
+async function killPreviousOpencodeProcess() {
   try {
-    console.log('🔵 Checking for existing OpenCode processes...')
+    const pidFilePath = path.join(app.getPath('userData'), 'opencode.pid')
+    let killedViaPid = false
 
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
+    // Method 1: Try to kill using PID file
+    try {
+      const pidContent = await fs.readFile(pidFilePath, 'utf-8')
+      const oldPid = parseInt(pidContent.trim())
 
-    if (process.platform === 'win32') {
-      // Windows: Kill by process name AND by port
+      if (!isNaN(oldPid)) {
+        console.log(`🔵 Found previous OpenCode PID: ${oldPid}`)
 
-      // Method 1: Try to kill by process name
-      try {
-        await execAsync('taskkill /F /IM opencode.exe 2>&1')
-        console.log('✓ Killed existing OpenCode processes by name')
-      } catch (error) {
-        // No processes found - this is okay
+        // Try to kill the process
+        if (process.platform === 'win32') {
+          const { exec } = await import('child_process')
+          const { promisify } = await import('util')
+          const execAsync = promisify(exec)
+
+          try {
+            // Use cmd.exe to ensure proper command interpretation
+            await execAsync(`cmd /c taskkill /F /PID ${oldPid}`)
+            console.log(`✓ Killed previous OpenCode process (PID: ${oldPid})`)
+            killedViaPid = true
+          } catch (error) {
+            console.log(`ℹ Previous process (PID: ${oldPid}) not found or already terminated`)
+          }
+        } else {
+          // Unix
+          try {
+            process.kill(oldPid, 'SIGTERM')
+            console.log(`✓ Killed previous OpenCode process (PID: ${oldPid})`)
+            killedViaPid = true
+          } catch (error) {
+            console.log(`ℹ Previous process (PID: ${oldPid}) not found or already terminated`)
+          }
+        }
+
+        // Wait briefly for process to terminate
+        await new Promise(resolve => setTimeout(resolve, 500))
       }
+    } catch (error) {
+      // No PID file or couldn't read it
+      console.log('ℹ No PID file found')
+    }
 
-      // Method 2: Kill by port (more reliable for zombies)
-      console.log('🔵 Checking ports for zombie processes...')
-      for (const port of [4096, 4097, 4098, 4099]) {
-        try {
-          const netstatResult = await execAsync(`netstat -ano | findstr ":${port}"`)
-          const lines = netstatResult.stdout.split('\n')
-          console.log(`🔵 Port ${port} netstat result:`, lines.length, 'lines')
+    // Method 2: Fallback - check port 4096 for zombie processes (in case PID file was lost)
+    if (!killedViaPid && process.platform === 'win32') {
+      const { exec } = await import('child_process')
+      const { promisify } = await import('util')
+      const execAsync = promisify(exec)
 
-          for (const line of lines) {
-            if (line.includes('LISTENING')) {
-              const parts = line.trim().split(/\s+/)
-              const pid = parts[parts.length - 1]
-              console.log(`🔵 Found process ${pid} on port ${port}`)
+      try {
+        console.log('🔵 Checking port 4096 for zombie OpenCode processes...')
+        const netstatResult = await execAsync(`netstat -ano | findstr ":4096"`)
+        const lines = netstatResult.stdout.split('\n')
 
-              if (pid && pid !== '0' && !isNaN(pid)) {
-                try {
-                  // Use /F instead of //F to avoid escaping issues
-                  await execAsync(`taskkill /F /PID ${pid}`)
-                  console.log(`✓ Killed process ${pid} occupying port ${port}`)
-                } catch (killError) {
-                  console.log(`⚠ Could not kill PID ${pid}:`, killError.message)
-                }
+        for (const line of lines) {
+          if (line.includes('LISTENING')) {
+            const parts = line.trim().split(/\s+/)
+            const pid = parts[parts.length - 1]
+            console.log(`🔵 Found process ${pid} on port 4096`)
+
+            if (pid && pid !== '0' && !isNaN(pid)) {
+              try {
+                // Use cmd.exe to ensure proper command interpretation
+                await execAsync(`cmd /c taskkill /F /PID ${pid}`)
+                console.log(`✓ Killed zombie process ${pid} on port 4096`)
+                await new Promise(resolve => setTimeout(resolve, 1000))
+              } catch (killError) {
+                console.log(`⚠ Could not kill PID ${pid}:`, killError.message)
               }
             }
           }
-        } catch (netstatError) {
-          // Port not in use - this is fine
-          console.log(`✓ Port ${port} is free`)
         }
-      }
-
-      // Wait for ports to be released
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      console.log('✓ Waited for port release')
-    } else {
-      // Unix: Use pkill
-
-      try {
-        await execAsync('pkill -9 opencode')
-        console.log('✓ Killed existing OpenCode processes')
-        // Wait a bit for processes to fully terminate
-        await new Promise(resolve => setTimeout(resolve, 500))
-      } catch (error) {
-        if (error.code === 1) {
-          console.log('✓ No existing OpenCode processes to clean up')
-        } else {
-          console.warn('Warning killing processes:', error.message)
-        }
+      } catch (netstatError) {
+        // Port not in use - that's fine
+        console.log(`✓ Port 4096 is free`)
       }
     }
+
+    // Delete the old PID file
+    try {
+      await fs.unlink(pidFilePath)
+    } catch {
+      // File doesn't exist - that's fine
+    }
   } catch (error) {
-    console.error('Failed to kill existing OpenCode processes:', error)
+    console.error('Failed to clean up previous OpenCode process:', error)
+  }
+}
+
+// Save OpenCode server PID to file for cleanup on next start
+async function saveOpenCodePid(pid) {
+  try {
+    const pidFilePath = path.join(app.getPath('userData'), 'opencode.pid')
+    await fs.writeFile(pidFilePath, pid.toString(), 'utf-8')
+    console.log(`✓ Saved OpenCode PID ${pid} to ${pidFilePath}`)
+  } catch (error) {
+    console.error('Failed to save OpenCode PID:', error)
   }
 }
 
@@ -401,36 +470,23 @@ async function initializeOpenCode() {
     console.log('🔵 Starting OpenCode initialization...')
     console.log('🔵 Working directory:', process.cwd())
 
-    // Kill any zombie processes first
-    await killExistingOpenCodeProcesses()
+    // Kill any zombie processes from previous crashes using PID file
+    await killPreviousOpencodeProcess()
 
-    // Try to start server, retrying with different ports if needed
-    let server = null
-    let lastError = null
-    const ports = [4096, 4097, 4098, 4099]
-
-    for (const port of ports) {
-      try {
-        console.log(`🔵 Attempting to start OpenCode server on port ${port}...`)
-        server = await startOpencodeServer({
-          hostname: '127.0.0.1',
-          port: port,
-          timeout: 10000
-        })
-        console.log(`✅ OpenCode server started successfully on port ${port}`)
-        break
-      } catch (error) {
-        console.log(`❌ Failed to start on port ${port}:`, error.message)
-        lastError = error
-        // Continue to next port
-      }
-    }
-
-    if (!server) {
-      throw lastError || new Error('Failed to start OpenCode server on any port')
-    }
+    // Start server with dynamic port allocation
+    console.log('🔵 Starting OpenCode server with dynamic port...')
+    const server = await startOpencodeServer({
+      hostname: '127.0.0.1',
+      port: 4096, // Preferred port
+      timeout: 10000
+    })
 
     opencodeServer = server
+
+    // Save PID for cleanup on next start
+    if (server.process && server.process.pid) {
+      await saveOpenCodePid(server.process.pid)
+    }
 
     // Create client to connect to the server
     opencodeClient = createOpencodeClient({
@@ -438,7 +494,7 @@ async function initializeOpenCode() {
     })
 
     console.log('✅✅✅ OpenCode server and client initialized ✅✅✅')
-    console.log(`✅ OpenCode server running (PID: ${opencodeServer?.pid || 'N/A'})`)
+    console.log(`✅ OpenCode server running (PID: ${server.process?.pid || 'N/A'})`)
     console.log('🔵 Server object:', opencodeServer ? 'exists' : 'null')
     console.log('🔵 Client object:', opencodeClient ? 'exists' : 'null')
     return true
@@ -554,16 +610,24 @@ async function cleanupOpenCode() {
     try {
       console.log('Stopping OpenCode server...')
       if (opencodeServer.process) {
-        // Kill the process forcefully
+        // Send SIGTERM for graceful shutdown
         opencodeServer.process.kill('SIGTERM')
 
-        // If it doesn't die after 2 seconds, force kill
-        setTimeout(() => {
-          if (opencodeServer.process && !opencodeServer.process.killed) {
-            console.log('Force killing OpenCode server...')
-            opencodeServer.process.kill('SIGKILL')
-          }
-        }, 2000)
+        // Wait for graceful shutdown
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            if (opencodeServer.process && !opencodeServer.process.killed) {
+              console.log('⚠ Graceful shutdown timeout, force killing...')
+              opencodeServer.process.kill('SIGKILL')
+            }
+            resolve()
+          }, 2000)
+
+          opencodeServer.process.on('exit', () => {
+            clearTimeout(timeout)
+            resolve()
+          })
+        })
       }
       if (opencodeServer.close) {
         opencodeServer.close()
@@ -573,19 +637,50 @@ async function cleanupOpenCode() {
       console.error('Failed to stop OpenCode server:', error)
     }
   }
+
+  // Remove PID file after successful cleanup
+  try {
+    const pidFilePath = path.join(app.getPath('userData'), 'opencode.pid')
+    await fs.unlink(pidFilePath)
+    console.log('✓ Removed OpenCode PID file')
+  } catch (error) {
+    // PID file might not exist - that's fine
+  }
 }
 
 // Cleanup OpenCode sessions and server on app quit
-app.on('before-quit', async () => {
+app.on('before-quit', async (event) => {
+  event.preventDefault() // Prevent immediate quit to allow cleanup
   await cleanupOpenCode()
+  app.exit(0) // Graceful exit after cleanup
 })
 
-// Also cleanup when window is closed (belt and suspenders)
+// Also cleanup when window is closed
 app.on('window-all-closed', async () => {
   await cleanupOpenCode()
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// Handle unexpected exits (crashes, kills)
+process.on('SIGINT', async () => {
+  console.log('🔵 Received SIGINT (Ctrl+C), cleaning up...')
+  await cleanupOpenCode()
+  process.exit(0)
+})
+
+process.on('SIGTERM', async () => {
+  console.log('🔵 Received SIGTERM, cleaning up...')
+  await cleanupOpenCode()
+  process.exit(0)
+})
+
+// Handle uncaught errors
+process.on('uncaughtException', async (error) => {
+  console.error('❌ Uncaught exception:', error)
+  await cleanupOpenCode()
+  process.exit(1)
 })
 
 // ===== IPC Handlers for File System Operations =====
