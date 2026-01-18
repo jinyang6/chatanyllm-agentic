@@ -293,7 +293,21 @@ function ensureGlobalEventListener() {
 
         // Check for errors
         if (event.type === 'error' || event.properties.error) {
-          const errorMsg = event.properties.error || 'OpenCode session error'
+          const error = event.properties.error
+          let errorMsg = 'OpenCode session error'
+
+          if (error) {
+            if (typeof error === 'string') {
+              errorMsg = error
+            } else if (error.message) {
+              errorMsg = error.message
+            } else {
+              errorMsg = JSON.stringify(error, null, 2)
+            }
+          }
+
+          console.error('OpenCode error:', errorMsg)
+
           if (listener.onError) {
             listener.onError(new Error(errorMsg))
           }
@@ -522,10 +536,18 @@ ${userMessage}`
     // Build final parts array for OpenCode
     const finalParts = [
       { type: 'text', text: userMessage },
-      ...messageParts  // Add image parts
+      ...messageParts  // Add file parts (images, documents, etc.)
     ]
 
-    console.log('🔵 Sending to OpenCode:', finalParts.length, 'parts (text + images)')
+    console.log('🔵 Sending to OpenCode:', finalParts.length, 'parts')
+    if (messageParts.length > 0) {
+      console.log('🔵 File attachments:', messageParts.map(p => ({
+        type: p.type,
+        mime: p.mime,
+        filename: p.filename,
+        urlLength: p.url?.length
+      })))
+    }
 
     // Send message to OpenCode session with user's selected provider and model
     const result = await window.electronAPI.opencode.sendMessage(

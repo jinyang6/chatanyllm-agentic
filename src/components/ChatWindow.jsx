@@ -16,7 +16,8 @@ import { useConversation } from '@/contexts/ConversationContext'
 import { useModelFetcher, ERROR_TYPES } from '@/hooks/useModelFetcher'
 import { useError } from '@/contexts/ErrorContext'
 import { sendStreamingMessage } from '@/services/chat/chatClient'
-import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink } from 'lucide-react'
+import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink, MoreVertical, FolderOpen, X } from 'lucide-react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { formatMessageForAPI, formatMessagesForAPI } from '@/utils/messageFormatters'
 import { isThinkingModel, isImageGenerationModel, getModalitiesForModel } from '@/utils/modelHelpers'
 import { handleStreamingError } from '@/utils/errorHandlers'
@@ -67,6 +68,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     getCurrentConversation,
     getConversationById,
     getWorkingDirectory,
+    updateWorkingDirectory,
     addOpencodeEvent,
     setOpencodeStatus,
     clearOpencodeActivity,
@@ -422,6 +424,33 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       } catch (error) {
         console.error('Failed to open folder:', error)
       }
+    }
+  }
+
+  // Change workspace folder
+  const handleChangeWorkspace = async () => {
+    if (!isElectron()) return
+
+    try {
+      const result = await window.electronAPI.dialog.selectDirectory()
+      if (result.success && !result.canceled && result.filePath) {
+        await updateWorkingDirectory(currentConversationId, result.filePath, 'linked')
+      }
+    } catch (error) {
+      console.error('Failed to select directory:', error)
+    }
+  }
+
+  // Unlink workspace (return to safe workspace)
+  const handleUnlinkWorkspace = async () => {
+    if (!isElectron()) return
+
+    try {
+      const appDataPath = await window.electronAPI.getAppDataPath()
+      const isolatedPath = `${appDataPath}\\userfiles\\workspaces\\${currentConversationId}`
+      await updateWorkingDirectory(currentConversationId, isolatedPath, 'isolated')
+    } catch (error) {
+      console.error('Failed to unlink workspace:', error)
     }
   }
 
@@ -867,16 +896,42 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       {/* Workspace indicator - clear footer below input */}
       {isElectron() && messages.length > 0 && (
         <div className="px-6 py-2 border-t border-border/50 bg-muted/10">
-          <button
-            onClick={handleOpenWorkspaceFolder}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-2 transition-colors group"
-            title="Click to open workspace folder in explorer"
-          >
-            <Folder className="w-3.5 h-3.5" />
-            <span className="font-medium">Workspace:</span>
-            <span className="group-hover:underline">{getWorkspaceName()}</span>
-            <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleOpenWorkspaceFolder}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-2 transition-colors group"
+              title="Click to open workspace folder in explorer"
+            >
+              <Folder className="w-3.5 h-3.5" />
+              <span className="font-medium">Workspace:</span>
+              <span className="group-hover:underline">{getWorkspaceName()}</span>
+              <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-5 w-5 p-0 -ml-1">
+                  <MoreVertical className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onClick={handleOpenWorkspaceFolder}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Open in Explorer
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleChangeWorkspace}>
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  Change Folder
+                </DropdownMenuItem>
+                {getWorkingDirectory(currentConversationId)?.type === 'linked' && (
+                  <DropdownMenuItem onClick={handleUnlinkWorkspace}>
+                    <X className="h-4 w-4 mr-2" />
+                    Return to Safe Workspace
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       )}
     </div>
