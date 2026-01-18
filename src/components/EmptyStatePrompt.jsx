@@ -1,10 +1,11 @@
-import { MessageSquare, FolderOpen } from 'lucide-react'
+import { MessageSquare, FolderOpen, Folder } from 'lucide-react'
 import { Button } from './ui/button'
 import { useConversation } from '@/contexts/ConversationContext'
 import { isElectron } from '@/lib/electron'
 
 export function EmptyStatePrompt({ conversationId }) {
-  const { updateWorkingDirectory } = useConversation()
+  const { updateWorkingDirectory, getWorkingDirectory } = useConversation()
+  const workingDir = getWorkingDirectory(conversationId)
 
   const handleLinkFolder = async () => {
     if (!isElectron()) return
@@ -17,6 +18,18 @@ export function EmptyStatePrompt({ conversationId }) {
     } catch (error) {
       console.error('Failed to select directory:', error)
     }
+  }
+
+  const getWorkspaceName = () => {
+    if (!workingDir) return 'Safe Workspace'
+
+    if (workingDir.type === 'isolated') {
+      return 'Safe Workspace'
+    }
+
+    // For linked folders, extract folder name
+    const parts = workingDir.path.split(/[/\\]/)
+    return parts[parts.length - 1] || parts[parts.length - 2] || 'Project'
   }
 
   return (
@@ -37,11 +50,21 @@ export function EmptyStatePrompt({ conversationId }) {
             variant="outline"
             size="lg"
             onClick={handleLinkFolder}
-            className="gap-2"
+            className="gap-2 mb-6"
           >
             <FolderOpen className="w-5 h-5" />
             Choose Project Folder
           </Button>
+
+          {/* Show current workspace selection */}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {workingDir?.type === 'linked' ? (
+              <FolderOpen className="w-4 h-4" />
+            ) : (
+              <Folder className="w-4 h-4" />
+            )}
+            <span>Current workspace: <strong className="text-foreground">{getWorkspaceName()}</strong></span>
+          </div>
         </>
       )}
       {!isElectron() && (

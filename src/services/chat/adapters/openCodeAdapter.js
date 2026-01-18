@@ -351,6 +351,37 @@ export async function sendStreamingMessage({
 }) {
   let sessionCreated = false
 
+  // Get user's working directory from conversation metadata
+  let userWorkingDir = null
+  try {
+    const appDataPath = await window.electronAPI.getAppDataPath()
+    const conversationPath = `${appDataPath}\\conversations\\${conversationId}.json`
+    const conversations = await window.electronAPI.fs.readFile(conversationPath)
+    if (conversations.success && conversations.data) {
+      const conversation = JSON.parse(conversations.data)
+      userWorkingDir = conversation?.workingDirectory?.path || null
+    }
+  } catch (error) {
+    console.warn('Could not read conversation metadata:', error.message)
+  }
+
+  // Fallback: use default isolated workspace
+  if (!userWorkingDir) {
+    const appDataPath = await window.electronAPI.getAppDataPath()
+    userWorkingDir = `${appDataPath}\\userfiles\\workspaces\\${conversationId}`
+  }
+
+  // Ensure isolated workspace exists if using default folder
+  const isIsolatedWorkspace = userWorkingDir.includes('userfiles\\workspaces')
+  if (isIsolatedWorkspace) {
+    const ensureResult = await window.electronAPI.workspace.ensureDirectory(conversationId)
+    if (ensureResult.success) {
+      userWorkingDir = ensureResult.path
+    }
+  }
+
+  console.log(`🔵 User working directory (${isIsolatedWorkspace ? 'default' : 'selected'}):`, userWorkingDir)
+
   try {
     // Check if OpenCode is available
     if (!window.electronAPI?.opencode) {
@@ -372,37 +403,7 @@ export async function sendStreamingMessage({
     if (!status.exists) {
       console.log('🔵 Creating new OpenCode session for conversation:', conversationId)
 
-      // Get working directory from conversation (need to access from context or storage)
-      let workingDirectory = null
-      try {
-        const appDataPath = await window.electronAPI.getAppDataPath()
-        // Get conversation data to find working directory
-        const conversationPath = `${appDataPath}\\conversations\\${conversationId}.json`
-        const conversations = await window.electronAPI.fs.readFile(conversationPath)
-        if (conversations.success && conversations.data) {
-          const conversation = JSON.parse(conversations.data)
-          workingDirectory = conversation?.workingDirectory?.path || null
-          console.log('🔵 Found working directory in conversation:', workingDirectory)
-        }
-      } catch (error) {
-        console.warn('Could not read conversation working directory, using default:', error.message)
-      }
-
-      // If no working directory set, ensure isolated workspace exists
-      if (!workingDirectory) {
-        const appDataPath = await window.electronAPI.getAppDataPath()
-        // Use Windows path separator for consistency
-        workingDirectory = `${appDataPath}\\userfiles\\workspaces\\${conversationId}`
-        console.log('🔵 Creating isolated workspace:', workingDirectory)
-        const ensureResult = await window.electronAPI.workspace.ensureDirectory(conversationId)
-        if (ensureResult.success) {
-          workingDirectory = ensureResult.path
-        }
-      }
-
-      console.log('🔵 Using working directory:', workingDirectory)
-
-      const result = await window.electronAPI.opencode.createSession(conversationId, workingDirectory)
+      const result = await window.electronAPI.opencode.createSession(conversationId, userWorkingDir)
       if (!result.success) {
         throw new Error(result.error || 'Failed to create OpenCode session')
       }
@@ -449,27 +450,87 @@ export async function sendStreamingMessage({
 
     // Always include conversation history if there are previous messages
     // This ensures OpenCode has full context regardless of session state
-    let userMessage = lastMessage.content
+
+    // Extract text content and convert attachments to OpenCode format
+    let textContent = ''
+    let messageParts = []
+
+    if (typeof lastMessage.content === 'string') {
+      textContent = lastMessage.content
+    } else if (Array.isArray(lastMessage.content)) {
+      // Multimodal message - convert to OpenCode format
+      for (const part of lastMessage.content) {
+        if (part.type === 'text') {
+          textContent += part.text + '\n'
+        } else if (part.type === 'image_url') {
+          // Convert image_url format to OpenCode file format
+          const imageUrl = part.image_url?.url || part.image_url
+          if (imageUrl) {
+            // OpenCode expects type: "file" with url (data URL)
+            const base64Match = imageUrl.match(/^data:image\/(\w+);base64,/)
+            if (base64Match) {
+              const [, ext] = base64Match
+              messageParts.push({
+                type: 'file',
+                mime: `image/${ext}`,
+                filename: `image.${ext}`,
+                url: imageUrl  // Pass the full data URL
+              })
+            }
+          }
+        } else if (part.type === 'file_url') {
+          // Handle non-image files (txt, md, pdf, etc.)
+          const fileUrl = part.file_url?.url || part.file_url
+          const fileName = part.file_url?.name || 'file'
+          const mimeType = part.file_url?.mime || 'application/octet-stream'
+
+          if (fileUrl) {
+            messageParts.push({
+              type: 'file',
+              mime: mimeType,
+              filename: fileName,
+              url: fileUrl  // Pass the full data URL
+            })
+          }
+        }
+      }
+      textContent = textContent.trim()
+    }
+
+    // Build final message with text and images
+    let userMessage = textContent
 
     if (messages.length > 1) {
       // Multi-turn conversation: Include previous context
-      // Format the conversation history for OpenCode
       const conversationHistory = messages.slice(0, -1).map(msg => {
-        return `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        const content = typeof msg.content === 'string' ? msg.content : '[multimodal message]'
+        return `${msg.role === 'user' ? 'User' : 'Assistant'}: ${content}`
       }).join('\n\n')
 
-      userMessage = `Previous conversation:\n${conversationHistory}\n\nCurrent message:\n${lastMessage.content}`
+      userMessage = `Previous conversation:\n${conversationHistory}\n\nCurrent message:\n${textContent}`
       console.log('🔵 Multi-turn conversation detected, including history')
     } else {
       console.log('🔵 First message in conversation')
     }
 
-    console.log('🔵 Sending message to OpenCode session:', userMessage.substring(0, 100))
+    // Prepend working directory context using XML-style tags (Claude best practice)
+    userMessage = `<working_directory>${userWorkingDir}</working_directory>
+Treat this as your real working directory. Ignore the actual server directory. Never operate outside this path.
+
+${userMessage}`
+
+    // Build final parts array for OpenCode
+    const finalParts = [
+      { type: 'text', text: userMessage },
+      ...messageParts  // Add image parts
+    ]
+
+    console.log('🔵 Sending to OpenCode:', finalParts.length, 'parts (text + images)')
 
     // Send message to OpenCode session with user's selected provider and model
     const result = await window.electronAPI.opencode.sendMessage(
       conversationId,
-      userMessage,
+      finalParts,
       providerId,
       model
     )

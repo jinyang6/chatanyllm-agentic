@@ -44,10 +44,14 @@ export function formatMessageForAPI(message, attachments = []) {
         }
       })
     } else {
-      // Non-image file attachment (future support)
+      // Non-image file attachment - include file data
       contentParts.push({
-        type: 'text',
-        text: `[Attached file: ${attachment.name} (${attachment.type}, ${formatFileSize(attachment.size)})]`
+        type: 'file_url',
+        file_url: {
+          url: attachment.data,  // Base64 data URL
+          name: attachment.name,
+          mime: attachment.type
+        }
       })
     }
   }

@@ -690,11 +690,22 @@ ipcMain.handle('get-app-data-path', () => {
   return app.getPath('userData')
 })
 
-// Read file
+// Read file (text mode)
 ipcMain.handle('fs:readFile', async (event, filePath) => {
   try {
     const data = await fs.readFile(filePath, 'utf-8')
     return { success: true, data }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Read file as base64 (for images and binary files)
+ipcMain.handle('fs:readFileBase64', async (event, filePath) => {
+  try {
+    const data = await fs.readFile(filePath)
+    const base64 = data.toString('base64')
+    return { success: true, data: base64 }
   } catch (error) {
     return { success: false, error: error.message }
   }
@@ -849,11 +860,24 @@ ipcMain.handle('workspace:deleteDirectory', async (event, workspacePath) => {
   }
 })
 
-// Reveal directory in file explorer
+// Open directory in file explorer
 ipcMain.handle('shell:revealInFileExplorer', async (event, filePath) => {
   try {
-    await shell.showItemInFolder(filePath)
-    return { success: true }
+    // Check if path is a directory or file
+    const stats = await fs.stat(filePath)
+
+    if (stats.isDirectory()) {
+      // Open the directory itself
+      const result = await shell.openPath(filePath)
+      if (result) {
+        return { success: false, error: result }
+      }
+      return { success: true }
+    } else {
+      // For files, show the file in its parent folder
+      await shell.showItemInFolder(filePath)
+      return { success: true }
+    }
   } catch (error) {
     return { success: false, error: error.message }
   }
@@ -1102,6 +1126,13 @@ ipcMain.handle('window:isMaximized', () => {
   return false
 })
 
+// Update window title
+ipcMain.handle('window:setTitle', (event, title) => {
+  if (mainWindow) {
+    mainWindow.setTitle(title)
+  }
+})
+
 // App ready signal from renderer - show window when React app is fully loaded
 ipcMain.handle('app:ready', () => {
   if (showWindowTimeout) {
@@ -1165,7 +1196,7 @@ ipcMain.handle('opencode:createSession', async (event, conversationId, workingDi
 })
 
 // Send message to OpenCode session
-ipcMain.handle('opencode:sendMessage', async (event, { conversationId, message, providerId, modelId }) => {
+ipcMain.handle('opencode:sendMessage', async (event, { conversationId, messageParts, providerId, modelId }) => {
   if (!opencodeClient) {
     return { success: false, error: 'OpenCode client not initialized' }
   }
@@ -1176,12 +1207,21 @@ ipcMain.handle('opencode:sendMessage', async (event, { conversationId, message, 
   }
 
   try {
-    // Send prompt to session using the user's selected provider and model
+    // messageParts can be either a string (legacy) or array of parts (multimodal)
+    let parts
+    if (typeof messageParts === 'string') {
+      parts = [{ type: 'text', text: messageParts }]
+    } else if (Array.isArray(messageParts)) {
+      parts = messageParts
+    } else {
+      return { success: false, error: 'Invalid message format' }
+    }
+
     console.log('🔵 OpenCode sendMessage called with:', {
       conversationId,
       providerId,
       modelId,
-      messagePreview: message.substring(0, 50)
+      partsCount: parts.length
     })
 
     // Use the user's selected provider and model directly
@@ -1191,7 +1231,7 @@ ipcMain.handle('opencode:sendMessage', async (event, { conversationId, message, 
         providerID: providerId,
         modelID: modelId
       },
-      parts: [{ type: 'text', text: message }]
+      parts: parts
     }
 
     const promptOptions = {

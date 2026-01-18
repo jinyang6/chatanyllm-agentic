@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   fs: {
     readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
+    readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
     writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
     writeBinaryFile: (filePath, base64Data) => ipcRenderer.invoke('fs:writeBinaryFile', filePath, base64Data),
     deleteFile: (filePath) => ipcRenderer.invoke('fs:deleteFile', filePath),
@@ -49,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    setTitle: (title) => ipcRenderer.invoke('window:setTitle', title),
     onStateChange: (callback) => {
       const subscription = (event, isMaximized) => callback(isMaximized)
       ipcRenderer.on('window-state-changed', subscription)
@@ -79,8 +81,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createSession: (conversationId, workingDirectory) =>
       ipcRenderer.invoke('opencode:createSession', conversationId, workingDirectory),
 
-    sendMessage: (conversationId, message, providerId, modelId) =>
-      ipcRenderer.invoke('opencode:sendMessage', { conversationId, message, providerId, modelId }),
+    sendMessage: (conversationId, messageParts, providerId, modelId) =>
+      ipcRenderer.invoke('opencode:sendMessage', { conversationId, messageParts, providerId, modelId }),
 
     abortSession: (conversationId) =>
       ipcRenderer.invoke('opencode:abortSession', conversationId),

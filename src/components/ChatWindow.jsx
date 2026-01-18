@@ -16,11 +16,12 @@ import { useConversation } from '@/contexts/ConversationContext'
 import { useModelFetcher, ERROR_TYPES } from '@/hooks/useModelFetcher'
 import { useError } from '@/contexts/ErrorContext'
 import { sendStreamingMessage } from '@/services/chat/chatClient'
-import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot } from 'lucide-react'
+import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink } from 'lucide-react'
 import { formatMessageForAPI, formatMessagesForAPI } from '@/utils/messageFormatters'
 import { isThinkingModel, isImageGenerationModel, getModalitiesForModel } from '@/utils/modelHelpers'
 import { handleStreamingError } from '@/utils/errorHandlers'
 import { createStreamingCallbacks } from '@/utils/streamingHelpers'
+import { isElectron } from '@/lib/electron'
 
 function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSidebar }) {
   const {
@@ -49,6 +50,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
   useEffect(() => {
     latestProviderRef.current = provider
   }, [provider])
+
   const {
     messages,
     isConversationStreaming,
@@ -64,6 +66,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     currentConversationId,
     getCurrentConversation,
     getConversationById,
+    getWorkingDirectory,
     addOpencodeEvent,
     setOpencodeStatus,
     clearOpencodeActivity,
@@ -71,6 +74,26 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     setOpencodeProcessingText,
     setOpencodePendingPermission
   } = useConversation()
+
+  // Update window title based on workspace
+  useEffect(() => {
+    if (!window.electronAPI?.window) return
+
+    const workingDir = getWorkingDirectory(currentConversationId)
+    if (!workingDir) {
+      window.electronAPI.window.setTitle('ChatAnyLLM')
+      return
+    }
+
+    if (workingDir.type === 'isolated') {
+      window.electronAPI.window.setTitle('ChatAnyLLM - Safe Workspace')
+    } else {
+      // Extract folder name from path for linked workspaces
+      const parts = workingDir.path.split(/[/\\]/)
+      const folderName = parts[parts.length - 1] || parts[parts.length - 2] || 'Project'
+      window.electronAPI.window.setTitle(`ChatAnyLLM - ${folderName}`)
+    }
+  }, [currentConversationId, getWorkingDirectory])
   const { fetchModels } = useModelFetcher()
   const { showMissingApiKeyAlert, showFetchErrorAlert, showInvalidApiKeyAlert } = useError()
 
@@ -371,6 +394,34 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     // Stop streaming only for the current conversation
     if (isConversationStreaming(currentConversationId)) {
       stopStreaming(currentConversationId)
+    }
+  }
+
+  // Get workspace name for display
+  const getWorkspaceName = () => {
+    const workingDir = getWorkingDirectory(currentConversationId)
+    if (!workingDir) return 'Safe Workspace'
+
+    if (workingDir.type === 'isolated') {
+      return 'Safe Workspace'
+    }
+
+    // For linked folders, extract folder name
+    const parts = workingDir.path.split(/[/\\]/)
+    return parts[parts.length - 1] || parts[parts.length - 2] || 'Project'
+  }
+
+  // Open workspace folder in file explorer
+  const handleOpenWorkspaceFolder = async () => {
+    if (!isElectron()) return
+
+    const workingDir = getWorkingDirectory(currentConversationId)
+    if (workingDir?.path) {
+      try {
+        await window.electronAPI.shell.revealInFileExplorer(workingDir.path)
+      } catch (error) {
+        console.error('Failed to open folder:', error)
+      }
     }
   }
 
@@ -779,16 +830,12 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
           onDeleteMessage={deleteMessage}
           isStreaming={isConversationStreaming(currentConversationId)}
           getOpencodeActivity={getOpencodeActivity}
+          currentConversationId={currentConversationId}
+          getWorkingDirectory={getWorkingDirectory}
         />
       )}
 
-      {/* Working directory selector - shown above input */}
-      <WorkingDirectorySelector
-        conversationId={currentConversationId}
-        className="px-4 py-2 border-t border-border"
-      />
-
-      {/* Message input */}
+      {/* Message input - no workspace UI visible after conversation starts */}
       {(() => {
         const isCurrentStreaming = isConversationStreaming(currentConversationId)
         const isAnyOtherStreaming = Array.from(streamingConversationIds).some(id => id !== currentConversationId)
@@ -801,7 +848,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
               isStreaming={false}
               onStopGeneration={handleStopGeneration}
               disabled={true}
-              disabledTooltip="Another conversation is currently generating a response. Please wait or switch to that conversation to stop it."
+              disabledTooltip="Another conversation is active. Switch to stop or wait."
             />
           )
         }
@@ -816,6 +863,22 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
           />
         )
       })()}
+
+      {/* Workspace indicator - clear footer below input */}
+      {isElectron() && messages.length > 0 && (
+        <div className="px-6 py-2 border-t border-border/50 bg-muted/10">
+          <button
+            onClick={handleOpenWorkspaceFolder}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-2 transition-colors group"
+            title="Click to open workspace folder in explorer"
+          >
+            <Folder className="w-3.5 h-3.5" />
+            <span className="font-medium">Workspace:</span>
+            <span className="group-hover:underline">{getWorkspaceName()}</span>
+            <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

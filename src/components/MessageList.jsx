@@ -18,6 +18,83 @@ import { formatFileSize } from '@/utils/messageFormatters'
 import { ImagePreviewModal } from '@/components/ImagePreviewModal'
 import { downloadImage, extractImageName } from '@/utils/imageDownload'
 
+// Workspace Image Component - loads images from workspace
+const WorkspaceImage = ({ src, alt, currentConversationId, getWorkingDirectory, setPreviewImage }) => {
+  const [imageSrc, setImageSrc] = useState(src)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    const loadImage = async () => {
+      // Check if it's already a valid URL (data URL, http, etc.)
+      if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://') || src.startsWith('file://')) {
+        setImageSrc(src)
+        setLoading(false)
+        return
+      }
+
+      // It's a relative path - load from workspace
+      try {
+        const workingDir = getWorkingDirectory?.(currentConversationId)
+        if (!workingDir?.path || !window.electronAPI?.fs) {
+          setImageSrc(src)
+          setLoading(false)
+          return
+        }
+
+        const filePath = `${workingDir.path}\\${src}`
+        const result = await window.electronAPI.fs.readFileBase64(filePath)
+
+        if (result.success && result.data) {
+          // Detect image type from filename
+          const ext = src.split('.').pop().toLowerCase()
+          const mimeType = ext === 'png' ? 'image/png' :
+                          ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
+                          ext === 'gif' ? 'image/gif' :
+                          ext === 'webp' ? 'image/webp' : 'image/png'
+
+          // Convert to data URL
+          const dataUrl = `data:${mimeType};base64,${result.data}`
+          setImageSrc(dataUrl)
+        } else {
+          setError(true)
+        }
+      } catch (err) {
+        console.error('Failed to load workspace image:', src, err)
+        setError(true)
+      }
+      setLoading(false)
+    }
+
+    loadImage()
+  }, [src, currentConversationId, getWorkingDirectory])
+
+  if (loading) {
+    return <span className="text-sm text-muted-foreground italic">Loading image...</span>
+  }
+
+  if (error) {
+    return <span className="text-sm text-red-500">Failed to load image: {src}</span>
+  }
+
+  return (
+    <img
+      src={imageSrc}
+      alt={alt || 'Image'}
+      className="max-w-full h-auto rounded-lg my-3 cursor-pointer hover:opacity-90 border border-border"
+      onClick={() => setPreviewImage?.({ url: imageSrc, name: extractImageName(imageSrc, alt || 'markdown-image.png') })}
+      onError={(e) => {
+        console.error('Image failed to load. Src:', src)
+        e.target.style.display = 'none'
+        e.target.insertAdjacentHTML('afterend',
+          '<div class="text-sm text-red-500 p-2 border border-red-200 rounded bg-red-50">Image failed to load: ' + src + '</div>'
+        )
+      }}
+      loading="lazy"
+    />
+  )
+}
+
 // Simple function components for react-markdown - filter out ref prop to avoid React 18 errors
 const CodeComponent = (props) => {
   const { inline, className, children, ref, ...rest } = props
@@ -75,7 +152,7 @@ const createRefSafeComponent = (Tag) => (props) => {
 }
 
 // Memoized markdown content component to prevent unnecessary re-parsing
-const MemoizedMarkdownContent = memo(({ content }) => {
+const MemoizedMarkdownContent = memo(({ content, currentConversationId, getWorkingDirectory, setPreviewImage }) => {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
@@ -119,25 +196,15 @@ const MemoizedMarkdownContent = memo(({ content }) => {
         h3: ({ children }) => <h3 className="text-lg font-semibold mt-3 mb-1 text-gray-900 dark:text-gray-100">{children}</h3>,
         h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-1 text-gray-900 dark:text-gray-100">{children}</h4>,
         hr: () => <hr className="my-4 border-border" />,
-        img: ({ src, alt }) => {
-          // Removed console.log for performance during rendering
-          return (
-            <img
-              src={src}
-              alt={alt || 'Image'}
-              className="max-w-full h-auto rounded-lg my-3 cursor-pointer hover:opacity-90 border border-border"
-              onClick={() => setPreviewImage({ url: src, name: extractImageName(src, alt || 'markdown-image.png') })}
-              onError={(e) => {
-                console.error('Image failed to load. Src length:', src?.length, 'First 100 chars:', src?.substring(0, 100))
-                e.target.style.display = 'none'
-                e.target.insertAdjacentHTML('afterend',
-                  '<div class="text-sm text-red-500 p-2 border border-red-200 rounded bg-red-50">Image failed to load</div>'
-                )
-              }}
-              loading="lazy"
-            />
-          )
-        },
+        img: ({ src, alt }) => (
+          <WorkspaceImage
+            src={src}
+            alt={alt}
+            currentConversationId={currentConversationId}
+            getWorkingDirectory={getWorkingDirectory}
+            setPreviewImage={setPreviewImage}
+          />
+        ),
         // Ref-safe wrappers for elements that might receive refs from rehype-raw
         div: createRefSafeComponent('div'),
         span: createRefSafeComponent('span'),
@@ -155,7 +222,7 @@ const MemoizedMarkdownContent = memo(({ content }) => {
   return prevProps.content === nextProps.content
 })
 
-function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, isStreaming = false, getOpencodeActivity }) {
+function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, isStreaming = false, getOpencodeActivity, currentConversationId, getWorkingDirectory }) {
   const [editingMessageId, setEditingMessageId] = useState(null)
   const [editContent, setEditContent] = useState('')
   const [deletingMessageId, setDeletingMessageId] = useState(null)
@@ -593,7 +660,12 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                       <div className="relative">
                       <div className={`relative ${collapsedMessages.has(message.id) ? 'max-h-[120px] overflow-hidden' : ''}`}>
                         <div className="prose prose-lg max-w-none break-words prose-ul:list-disc prose-ol:list-decimal prose-li:marker:text-gray-900 dark:prose-li:marker:text-gray-100 prose-p:text-gray-900 dark:prose-p:text-gray-100">
-                          <MemoizedMarkdownContent content={cleanContent} />
+                          <MemoizedMarkdownContent
+                            content={cleanContent}
+                            currentConversationId={currentConversationId}
+                            getWorkingDirectory={getWorkingDirectory}
+                            setPreviewImage={setPreviewImage}
+                          />
                         </div>
                         {/* Display generated images separately */}
                         {generatedImages.length > 0 && (

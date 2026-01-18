@@ -299,7 +299,7 @@ function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, di
                   </TooltipTrigger>
                   <TooltipContent>
                     {disabledTooltip && !canSend && disabled ? (
-                      <p className="text-sm text-justify max-w-xs">{disabledTooltip}</p>
+                      <p className="text-sm max-w-xs">{disabledTooltip}</p>
                     ) : (
                       <p className="text-sm">Send message (Enter)</p>
                     )}

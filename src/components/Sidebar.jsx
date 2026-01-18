@@ -6,13 +6,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Plus as PlusIcon, Settings as SettingsIcon, MessageSquare as MessageSquareIcon, Pencil as PencilIcon, Trash as TrashIcon, MoreVertical as MoreVerticalIcon } from 'lucide-react'
+import { Plus as PlusIcon, Settings as SettingsIcon, MessageSquare as MessageSquareIcon, Pencil as PencilIcon, Trash as TrashIcon, MoreVertical as MoreVerticalIcon, FolderOpen as FolderOpenIcon } from 'lucide-react'
 import { useConversation } from '@/contexts/ConversationContext'
 import { useProvider } from '@/contexts/ProviderContext'
 import { PROVIDERS } from '@/config/providers'
 
 function Sidebar({ isOpen, currentConversation, onSelectConversation, onOpenSettings }) {
-  const { conversations, currentConversationId, startNewConversation, selectConversation, updateConversationTitle, deleteConversation } = useConversation()
+  const { conversations, currentConversationId, startNewConversation, selectConversation, updateConversationTitle, deleteConversation, getWorkingDirectory } = useConversation()
   const { setProvider, customProviders } = useProvider()
 
 
@@ -152,9 +152,15 @@ function Sidebar({ isOpen, currentConversation, onSelectConversation, onOpenSett
                   {/* Title section - left side */}
                   <MessageSquareIcon className="h-5 w-5 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-base font-medium leading-snug">
-                      {conv.title.length > 16 ? conv.title.substring(0, 16) + '...' : conv.title}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-base font-medium leading-snug">
+                        {conv.title.length > 16 ? conv.title.substring(0, 16) + '...' : conv.title}
+                      </p>
+                      {/* Show folder icon for linked workspaces */}
+                      {getWorkingDirectory(conv.id)?.type === 'linked' && (
+                        <FolderOpenIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </div>
                     <p className="text-sm text-muted-foreground mt-1">{formatTimestamp(conv.updatedAt)}</p>
                   </div>
 
