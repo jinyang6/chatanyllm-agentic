@@ -101,6 +101,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('opencode:event', subscription)
       // Return cleanup function
       return () => ipcRenderer.removeListener('opencode:event', subscription)
+    },
+
+    // Update management
+    getVersion: () => ipcRenderer.invoke('opencode:getVersion'),
+    getAvailableVersions: () => ipcRenderer.invoke('opencode:getAvailableVersions'),
+    checkUpdates: () => ipcRenderer.invoke('opencode:checkUpdates'),
+    update: (targetVersion) => ipcRenderer.invoke('opencode:update', targetVersion),
+    onUpdateProgress: (callback) => {
+      const subscription = (event, data) => callback(data)
+      ipcRenderer.on('opencode:updateProgress', subscription)
+      return () => ipcRenderer.removeListener('opencode:updateProgress', subscription)
     }
   }
 })

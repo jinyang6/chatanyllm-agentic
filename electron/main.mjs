@@ -559,6 +559,126 @@ if (process.platform === 'win32') {
   app.commandLine.appendSwitch('enable-zero-copy')
 }
 
+// ===== OpenCode Update Management =====
+
+// Get current OpenCode version
+ipcMain.handle('opencode:getVersion', async () => {
+  try {
+    const packageJsonPath = path.join(__dirname, '..', 'node_modules', '@opencode-ai', 'sdk', 'package.json')
+    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+    return { success: true, version: packageJson.version }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Get available OpenCode versions from npm (last 10 versions)
+ipcMain.handle('opencode:getAvailableVersions', async () => {
+  try {
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
+
+    // Get current version
+    const packageJsonPath = path.join(__dirname, '..', 'node_modules', '@opencode-ai', 'sdk', 'package.json')
+    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+    const currentVersion = packageJson.version
+
+    // Get all versions from npm registry
+    const { stdout } = await execAsync('npm view @opencode-ai/sdk versions --json')
+    const allVersions = JSON.parse(stdout)
+
+    // Get last 10 versions (newest first)
+    const versions = allVersions.slice(-10).reverse()
+    const latestVersion = versions[0]
+
+    return {
+      success: true,
+      currentVersion,
+      latestVersion,
+      versions,
+      updateAvailable: currentVersion !== latestVersion
+    }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Check for OpenCode updates (kept for backward compatibility)
+ipcMain.handle('opencode:checkUpdates', async () => {
+  try {
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
+
+    // Get current version
+    const packageJsonPath = path.join(__dirname, '..', 'node_modules', '@opencode-ai', 'sdk', 'package.json')
+    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+    const currentVersion = packageJson.version
+
+    // Check npm registry for latest version
+    const { stdout } = await execAsync('npm view @opencode-ai/sdk version')
+    const latestVersion = stdout.trim()
+
+    return {
+      success: true,
+      currentVersion,
+      latestVersion,
+      updateAvailable: currentVersion !== latestVersion
+    }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// Update OpenCode to specific version
+ipcMain.handle('opencode:update', async (event, targetVersion) => {
+  try {
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
+
+    // Close OpenCode server if running
+    if (opencodeServer) {
+      console.log('🔵 Stopping OpenCode server for update...')
+      await cleanupOpenCode()
+    }
+
+    // Install specific version via npm
+    const versionSpec = targetVersion ? `@opencode-ai/sdk@${targetVersion}` : '@opencode-ai/sdk@latest'
+    console.log('🔵 Installing OpenCode:', versionSpec)
+    const projectRoot = path.join(__dirname, '..')
+
+    // Send progress updates
+    event.sender.send('opencode:updateProgress', { stage: 'downloading', message: `Installing ${targetVersion || 'latest'}...` })
+
+    const { stdout, stderr } = await execAsync(`npm install ${versionSpec}`, {
+      cwd: projectRoot,
+      timeout: 120000 // 2 minute timeout
+    })
+
+    console.log('✓ OpenCode installed successfully')
+    console.log('stdout:', stdout)
+    if (stderr) console.log('stderr:', stderr)
+
+    event.sender.send('opencode:updateProgress', { stage: 'complete', message: 'Installation complete!' })
+
+    // Get new version
+    const packageJsonPath = path.join(projectRoot, 'node_modules', '@opencode-ai', 'sdk', 'package.json')
+    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+    const newVersion = packageJson.version
+
+    return {
+      success: true,
+      version: newVersion,
+      message: 'OpenCode updated successfully. Please restart the application.'
+    }
+  } catch (error) {
+    console.error('❌ Failed to update OpenCode:', error)
+    return { success: false, error: error.message }
+  }
+})
+
 app.whenReady().then(() => {
   // Set app icon for Windows taskbar
   if (process.platform === 'win32') {

@@ -877,7 +877,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
               isStreaming={false}
               onStopGeneration={handleStopGeneration}
               disabled={true}
-              disabledTooltip="Another conversation is active. Switch to stop or wait."
+              disabledTooltip="Another conversation is streaming"
             />
           )
         }
