@@ -62,7 +62,7 @@ export function AlertDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <div className="flex items-center gap-2">
             {getIcon()}
@@ -75,8 +75,10 @@ export function AlertDialog({
 
         {details && (
           <Alert variant={getAlertVariant()}>
-            <AlertDescription className="text-sm">
-              {details}
+            <AlertDescription className="text-sm break-words overflow-wrap-anywhere max-h-60 overflow-auto">
+              <pre className="whitespace-pre-wrap break-all font-mono text-xs">
+                {details}
+              </pre>
             </AlertDescription>
           </Alert>
         )}
