@@ -1,255 +1,25 @@
 import { useState, useEffect, useRef, memo } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import rehypeRaw from 'rehype-raw'
-import rehypeSanitize from 'rehype-sanitize'
-import rehypeKatex from 'rehype-katex'
-import { minimalSanitizeSchema } from '@/lib/sanitizeSchema'
-import 'katex/dist/katex.min.css'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Bot as BotIcon, User as UserIcon, RefreshCw as RefreshCwIcon, Pencil as PencilIcon, Check as CheckIcon, X as XIcon, Trash2 as Trash2Icon, FileText as FileIcon, Loader, LoaderCircle, Copy as CopyIcon, ChevronDown, ChevronUp } from 'lucide-react'
+import { Bot as BotIcon, User as UserIcon, RefreshCw as RefreshCwIcon, Pencil as PencilIcon, Check as CheckIcon, X as XIcon, Trash2 as Trash2Icon, FileText as FileIcon, Loader, LoaderCircle, Copy as CopyIcon, ChevronDown, ChevronUp, Folder as FolderIcon } from 'lucide-react'
 import { CopyButton } from '@/components/ui/copy-button'
 import { formatFileSize } from '@/utils/messageFormatters'
 import { ImagePreviewModal } from '@/components/ImagePreviewModal'
 import { downloadImage, extractImageName } from '@/utils/imageDownload'
-
-// Compaction Message Component - shows expandable summary
-const CompactionMessage = ({ message }) => {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="my-6">
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-px bg-border"></div>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground px-2 hover:text-foreground transition-colors cursor-pointer"
-        >
-          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          Earlier messages summarized ({message.compactedCount || 'multiple'} messages)
-        </button>
-        <div className="flex-1 h-px bg-border"></div>
-      </div>
-
-      {expanded && message.content && (
-        <div className="mt-4 mx-8 p-4 bg-muted/30 rounded-lg border border-border">
-          <div className="text-sm text-muted-foreground whitespace-pre-wrap">
-            {message.content}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Workspace Image Component - loads images from workspace
-const WorkspaceImage = ({ src, alt, currentConversationId, getWorkingDirectory, setPreviewImage }) => {
-  const [imageSrc, setImageSrc] = useState(src)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    const loadImage = async () => {
-      // Check if it's already a valid URL (data URL, http, etc.)
-      if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://') || src.startsWith('file://')) {
-        setImageSrc(src)
-        setLoading(false)
-        return
-      }
-
-      // It's a relative path - load from workspace
-      try {
-        const workingDir = getWorkingDirectory?.(currentConversationId)
-        if (!workingDir?.path || !window.electronAPI?.fs) {
-          setImageSrc(src)
-          setLoading(false)
-          return
-        }
-
-        const filePath = `${workingDir.path}\\${src}`
-        const result = await window.electronAPI.fs.readFileBase64(filePath)
-
-        if (result.success && result.data) {
-          // Detect image type from filename
-          const ext = src.split('.').pop().toLowerCase()
-          const mimeType = ext === 'png' ? 'image/png' :
-                          ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-                          ext === 'gif' ? 'image/gif' :
-                          ext === 'webp' ? 'image/webp' : 'image/png'
-
-          // Convert to data URL
-          const dataUrl = `data:${mimeType};base64,${result.data}`
-          setImageSrc(dataUrl)
-        } else {
-          setError(true)
-        }
-      } catch (err) {
-        console.error('Failed to load workspace image:', src, err)
-        setError(true)
-      }
-      setLoading(false)
-    }
-
-    loadImage()
-  }, [src, currentConversationId, getWorkingDirectory])
-
-  if (loading) {
-    return <span className="text-sm text-muted-foreground italic">Loading image...</span>
-  }
-
-  if (error) {
-    return <span className="text-sm text-red-500">Failed to load image: {src}</span>
-  }
-
-  return (
-    <img
-      src={imageSrc}
-      alt={alt || 'Image'}
-      className="max-w-full h-auto rounded-lg my-3 cursor-pointer hover:opacity-90 border border-border"
-      onClick={() => setPreviewImage?.({ url: imageSrc, name: extractImageName(imageSrc, alt || 'markdown-image.png') })}
-      onError={(e) => {
-        console.error('Image failed to load. Src:', src)
-        e.target.style.display = 'none'
-        e.target.insertAdjacentHTML('afterend',
-          '<div class="text-sm text-red-500 p-2 border border-red-200 rounded bg-red-50">Image failed to load: ' + src + '</div>'
-        )
-      }}
-      loading="lazy"
-    />
-  )
-}
-
-// Simple function components for react-markdown - filter out ref prop to avoid React 18 errors
-const CodeComponent = (props) => {
-  const { inline, className, children, ref, ...rest } = props
-  if (inline) {
-    return (
-      <code className="bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-1.5 py-0.5 rounded text-sm font-mono border border-gray-300 dark:border-gray-600" {...rest}>
-        {children}
-      </code>
-    )
-  }
-  return (
-    <code className={className || ''} {...rest}>
-      {children}
-    </code>
-  )
-}
-
-const PreComponent = (props) => {
-  const { ref, children, ...rest } = props
-
-  // Extract code text from children for copy functionality
-  const getCodeText = () => {
-    if (typeof children === 'string') return children
-    if (children?.props?.children) {
-      if (typeof children.props.children === 'string') {
-        return children.props.children
-      }
-      if (Array.isArray(children.props.children)) {
-        return children.props.children.join('')
-      }
-    }
-    return ''
-  }
-
-  const codeText = getCodeText()
-
-  return (
-    <div className="relative group my-4">
-      <pre className="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-4 pr-12 rounded-lg overflow-x-auto max-w-full border border-gray-300 dark:border-gray-700" {...rest}>
-        {children}
-      </pre>
-      {codeText && (
-        <div className="absolute top-2 right-2 z-10">
-          <CopyButton text={codeText} className="bg-background/90 hover:bg-background shadow-md border" />
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Ref-safe wrappers for common HTML elements that rehype-raw might add refs to
-const createRefSafeComponent = (Tag) => (props) => {
-  const { ref, node, ...rest } = props
-  return <Tag {...rest} />
-}
-
-// Memoized markdown content component to prevent unnecessary re-parsing
-const MemoizedMarkdownContent = memo(({ content, currentConversationId, getWorkingDirectory, setPreviewImage }) => {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[
-        rehypeRaw,
-        rehypeKatex,
-        [rehypeSanitize, minimalSanitizeSchema]
-      ]}
-      remarkRehypeOptions={{
-        allowDangerousHtml: true
-      }}
-      components={{
-        // Custom component overrides for better styling
-        p: ({ children }) => <p className="mb-2 last:mb-0 text-justify">{children}</p>,
-        code: CodeComponent,
-        pre: PreComponent,
-        blockquote: ({ children }) => (
-          <blockquote className="border-l-4 border-primary/50 pl-4 italic my-3 text-gray-800 dark:text-gray-300">
-            {children}
-          </blockquote>
-        ),
-        table: ({ children }) => (
-          <div className="overflow-x-auto my-3">
-            <table className="min-w-full border-collapse border border-border">
-              {children}
-            </table>
-          </div>
-        ),
-        thead: ({ children }) => <thead className="bg-muted">{children}</thead>,
-        tbody: ({ children }) => <tbody>{children}</tbody>,
-        tr: ({ children }) => <tr className="border-b border-border">{children}</tr>,
-        th: ({ children }) => <th className="px-4 py-2 text-left font-semibold text-gray-900 dark:text-gray-100">{children}</th>,
-        td: ({ children }) => <td className="px-4 py-2 text-gray-900 dark:text-gray-100">{children}</td>,
-        a: ({ href, children }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-            {children}
-          </a>
-        ),
-        h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-2 text-gray-900 dark:text-gray-100">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-xl font-bold mt-3 mb-2 text-gray-900 dark:text-gray-100">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-lg font-semibold mt-3 mb-1 text-gray-900 dark:text-gray-100">{children}</h3>,
-        h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-1 text-gray-900 dark:text-gray-100">{children}</h4>,
-        hr: () => <hr className="my-4 border-border" />,
-        img: ({ src, alt }) => (
-          <WorkspaceImage
-            src={src}
-            alt={alt}
-            currentConversationId={currentConversationId}
-            getWorkingDirectory={getWorkingDirectory}
-            setPreviewImage={setPreviewImage}
-          />
-        ),
-        // Ref-safe wrappers for elements that might receive refs from rehype-raw
-        div: createRefSafeComponent('div'),
-        span: createRefSafeComponent('span'),
-        b: createRefSafeComponent('b'),
-        i: createRefSafeComponent('i'),
-        strong: createRefSafeComponent('strong'),
-        em: createRefSafeComponent('em'),
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  )
-}, (prevProps, nextProps) => {
-  // Only re-render if content actually changed
-  return prevProps.content === nextProps.content
-})
+import { CompactionMessage } from '@/components/message/CompactionMessage'
+import { MemoizedMarkdownContent } from '@/components/message/MarkdownContent'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, isStreaming = false, getOpencodeActivity, currentConversationId, getWorkingDirectory }) {
   const [editingMessageId, setEditingMessageId] = useState(null)
@@ -540,13 +310,15 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                     <ScrollBar orientation="horizontal" />
                   </ScrollArea>
                 )}
-                <Card
-                  className={`p-4 w-fit max-w-full overflow-hidden border-0 shadow-none ${
-                    message.role === 'user'
-                      ? 'bg-muted text-foreground'
-                      : 'bg-transparent text-card-foreground'
-                  }`}
-                >
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <Card
+                      className={`p-4 w-fit max-w-full overflow-hidden border-0 shadow-none ${
+                        message.role === 'user'
+                          ? 'bg-muted text-foreground'
+                          : 'bg-transparent text-card-foreground'
+                      }`}
+                    >
                   {isEditing ? (
                     <div className="space-y-3">
                       <Textarea
@@ -753,6 +525,51 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                     </>
                   )}
                 </Card>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent className="w-52">
+                    <ContextMenuGroup>
+                      <ContextMenuItem
+                        onClick={() => {
+                          const selection = window.getSelection()?.toString()
+                          if (selection) {
+                            navigator.clipboard.writeText(selection)
+                          } else {
+                            // If no selection, copy entire message
+                            navigator.clipboard.writeText(cleanContent || message.content)
+                          }
+                        }}
+                      >
+                        <CopyIcon />
+                        Copy
+                        <ContextMenuShortcut>
+                          {navigator.platform.includes('Mac') ? '⌘C' : 'Ctrl+C'}
+                        </ContextMenuShortcut>
+                      </ContextMenuItem>
+                    </ContextMenuGroup>
+                    {getWorkingDirectory && (
+                      <>
+                        <ContextMenuSeparator />
+                        <ContextMenuGroup>
+                          <ContextMenuItem
+                            onClick={async () => {
+                              const workingDir = getWorkingDirectory(currentConversationId)
+                              if (workingDir?.path && window.electronAPI?.shell) {
+                                try {
+                                  await window.electronAPI.shell.revealInFileExplorer(workingDir.path)
+                                } catch (error) {
+                                  console.error('Failed to open folder:', error)
+                                }
+                              }
+                            }}
+                          >
+                            <FolderIcon />
+                            Open Folder
+                          </ContextMenuItem>
+                        </ContextMenuGroup>
+                      </>
+                    )}
+                  </ContextMenuContent>
+                </ContextMenu>
                 {/* Generating indicator - show when generating content (either no reasoning or reasoning complete) */}
                 {isGenerating && (message.reasoning === '' ? cleanContent.length > 0 : message.isReasoningComplete) && (
                   <div className="flex items-center gap-2 mt-3">

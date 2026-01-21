@@ -7,6 +7,15 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { formatFileSize } from '@/utils/messageFormatters'
 import { convertImageToPNG, calculateBase64Size } from '@/utils/imageConverter'
 import { toast } from 'sonner'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import { CopyIcon, ClipboardPasteIcon, ScissorsIcon, Type as SelectAllIcon } from 'lucide-react'
 
 function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, disabled = false, disabledTooltip = null }) {
   const [message, setMessage] = useState('')
@@ -243,22 +252,140 @@ function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, di
               </Tooltip>
             </TooltipProvider>
 
-            {/* Textarea */}
-            <Textarea
-              ref={textareaRef}
-              value={message}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                isStreaming
-                  ? 'Waiting for response...'
-                  : 'Send a message... (Shift+Enter for new line, Ctrl+V to paste images)'
-              }
-              disabled={isDisabled}
-              className="min-h-[44px] max-h-[400px] resize-none border-0 bg-transparent px-4 py-3.5 text-base md:text-base font-normal text-black dark:text-white leading-[1.5] antialiased shadow-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 flex-1"
-              rows={1}
-            />
+            {/* Textarea with Context Menu */}
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <Textarea
+                  ref={textareaRef}
+                  value={message}
+                  onChange={handleChange}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder={
+                    isStreaming
+                      ? 'Waiting for response...'
+                      : 'Send a message... (Shift+Enter for new line, Ctrl+V to paste images)'
+                  }
+                  disabled={isDisabled}
+                  className="min-h-[44px] max-h-[400px] resize-none border-0 bg-transparent px-4 py-3.5 text-base md:text-base font-normal text-black dark:text-white leading-[1.5] antialiased shadow-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 flex-1"
+                  rows={1}
+                />
+              </ContextMenuTrigger>
+              <ContextMenuContent className="w-52">
+                <ContextMenuItem
+                  onClick={() => {
+                    const selection = window.getSelection()?.toString()
+                    if (selection) {
+                      navigator.clipboard.writeText(selection)
+                    }
+                  }}
+                >
+                  <CopyIcon />
+                  Copy
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘C' : 'Ctrl+C'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={() => {
+                    const selection = window.getSelection()?.toString()
+                    if (selection && textareaRef.current) {
+                      document.execCommand('cut')
+                    }
+                  }}
+                >
+                  <ScissorsIcon />
+                  Cut
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘X' : 'Ctrl+X'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={async () => {
+                    try {
+                      // Try to read clipboard items (supports images and text)
+                      const clipboardItems = await navigator.clipboard.read()
+
+                      if (!clipboardItems || clipboardItems.length === 0) {
+                        return // Empty clipboard
+                      }
+
+                      for (const item of clipboardItems) {
+                        // Check for images first
+                        const imageType = item.types.find(type => type.startsWith('image/'))
+                        if (imageType) {
+                          const blob = await item.getType(imageType)
+                          const file = new File([blob], 'pasted-image.png', { type: blob.type })
+
+                          // Check file size
+                          if (file.size > 10 * 1024 * 1024) {
+                            toast.error('Image too large (max 10MB)')
+                            continue
+                          }
+
+                          try {
+                            // convertImageToPNG returns a data URL string, not a File
+                            const pngDataUrl = await convertImageToPNG(file)
+                            const size = calculateBase64Size(pngDataUrl)
+
+                            setAttachments(prev => [...prev, {
+                              id: Date.now() + Math.random(), // Unique ID
+                              name: 'pasted-image.png',
+                              data: pngDataUrl,
+                              size: size,
+                              isImage: true,
+                              type: 'image/png'
+                            }])
+                          } catch (convertError) {
+                            console.error('Failed to convert image:', convertError)
+                            toast.error('Failed to process image')
+                          }
+                        } else {
+                          // If no image, try text
+                          const text = await navigator.clipboard.readText()
+                          if (text) {
+                            setMessage(prev => prev + text)
+                          }
+                        }
+                      }
+                    } catch (error) {
+                      // Silently ignore if clipboard is empty or permission denied
+                      if (error.name === 'NotAllowedError') {
+                        console.warn('Clipboard access denied')
+                      } else if (error.message?.includes('No valid data')) {
+                        // Empty clipboard - do nothing
+                      } else {
+                        console.error('Failed to read clipboard:', error)
+                      }
+                    }
+                  }}
+                >
+                  <ClipboardPasteIcon />
+                  Paste
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘V' : 'Ctrl+V'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onClick={() => {
+                    // Use setTimeout to ensure menu closes first, then select
+                    setTimeout(() => {
+                      if (textareaRef.current) {
+                        textareaRef.current.focus()
+                        textareaRef.current.setSelectionRange(0, textareaRef.current.value.length)
+                      }
+                    }, 0)
+                  }}
+                >
+                  <SelectAllIcon />
+                  Select All
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘A' : 'Ctrl+A'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
 
             {/* Send/Stop Button */}
             {isStreaming ? (

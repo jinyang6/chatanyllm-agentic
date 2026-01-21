@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
-import MessageList from './MessageList'
-import MessageInput from './MessageInput'
-import { WorkingDirectorySelector } from './WorkingDirectorySelector'
-import { EmptyStatePrompt } from './EmptyStatePrompt'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { ChatHeader } from './chat/ChatHeader'
+import { MessageArea } from './chat/MessageArea'
+import { MessageInputArea } from './chat/MessageInputArea'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
@@ -15,16 +14,17 @@ import { useProvider } from '@/contexts/ProviderContext'
 import { useConversation } from '@/contexts/ConversationContext'
 import { useModelFetcher, ERROR_TYPES } from '@/hooks/useModelFetcher'
 import { useError } from '@/contexts/ErrorContext'
+import { useStreamingMessage } from '@/hooks/useStreamingMessage'
+import { useWorkspaceManagement } from '@/hooks/useWorkspaceManagement'
+import { useMessageOperations } from '@/hooks/useMessageOperations'
 import { sendStreamingMessage } from '@/services/chat/chatClient'
 import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink, MoreVertical, FolderOpen, X, Archive } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { formatMessageForAPI, formatMessagesForAPI } from '@/utils/messageFormatters'
 import { isThinkingModel, isImageGenerationModel, getModalitiesForModel } from '@/utils/modelHelpers'
-import { handleStreamingError } from '@/utils/errorHandlers'
-import { createStreamingCallbacks } from '@/utils/streamingHelpers'
 import { autoCompact, compactConversation } from '@/utils/compaction'
 import { isElectron } from '@/lib/electron'
 import { Loader } from 'lucide-react'
+import { COMPACTION_CONFIG } from '@/config/constants'
 
 function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSidebar }) {
   const {
@@ -39,47 +39,103 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     isLoading
   } = useProvider()
 
-  // Use refs to track the absolutely latest model/provider selections
-  // This solves the issue where React state updates are async and retry
-  // might read stale values if user changes model and immediately clicks retry
-  const latestModelRef = useRef(model)
-  const latestProviderRef = useRef(provider)
-
-  // Keep refs in sync with state
-  useEffect(() => {
-    latestModelRef.current = model
-  }, [model])
-
-  useEffect(() => {
-    latestProviderRef.current = provider
-  }, [provider])
-
   const {
-    messages,
     isConversationStreaming,
     streamingConversationIds,
-    startStreaming,
-    stopStreaming,
-    addMessage,
-    updateLastMessage,
-    updateLastMessageReasoning,
-    markReasoningComplete,
-    replaceMessages,
-    deleteMessage,
     currentConversationId,
     getCurrentConversation,
-    getConversationById,
-    getWorkingDirectory,
-    updateWorkingDirectory,
-    addOpencodeEvent,
-    setOpencodeStatus,
-    clearOpencodeActivity,
     getOpencodeActivity,
-    setOpencodeProcessingText,
-    setOpencodePendingPermission
+    getWorkingDirectory,
+    replaceMessages
   } = useConversation()
 
-  const [isCompacting, setIsCompacting] = useState(false)
+  // Use custom hooks for cleaner code organization
+  const { messages, deleteMessage } = useMessageOperations(currentConversationId)
+
+  const { showMissingApiKeyAlert, showFetchErrorAlert, showInvalidApiKeyAlert } = useError()
+
+  // Summarize messages using LLM - defined early so it can be passed to hooks
+  const summarizeWithLLM = useCallback(async (summaryPrompt) => {
+    return new Promise((resolve) => {
+      console.log('🔵 Calling LLM to summarize conversation...')
+      let summary = ''
+
+      // Get current provider API key
+      const currentApiKey = apiKeys[provider]
+      if (!currentApiKey) {
+        console.error('No API key available for summarization')
+        resolve('Earlier conversation (summary unavailable - no API key)')
+        return
+      }
+
+      try {
+        sendStreamingMessage({
+          providerId: provider,
+          apiKey: currentApiKey,
+          model,
+          messages: [{ role: 'user', content: summaryPrompt }],
+          onChunk: (chunk, fullContent) => {
+            summary = fullContent
+          },
+          onComplete: (fullContent) => {
+            console.log('✓ Summary generated:', fullContent?.substring(0, 100) + '...')
+            resolve(fullContent || summary || 'Earlier conversation (summary unavailable)')
+          },
+          onError: (err) => {
+            console.error('Summarization failed:', err)
+            resolve('Earlier conversation (summary unavailable)')
+          },
+          abortSignal: null,
+          conversationId: currentConversationId
+        })
+      } catch (error) {
+        console.error('Failed to generate summary:', error)
+        resolve('Earlier conversation (summary unavailable)')
+      }
+    })
+  }, [apiKeys, provider, model, currentConversationId])
+
+  // Check and perform auto-compaction after message completes
+  const checkAndCompactConversation = useCallback(async () => {
+    try {
+      const result = await autoCompact(messages, summarizeWithLLM, {
+        messageThreshold: COMPACTION_CONFIG.MESSAGE_THRESHOLD,
+        tokenThreshold: COMPACTION_CONFIG.TOKEN_THRESHOLD,
+        keepLast: COMPACTION_CONFIG.KEEP_LAST_MESSAGES
+      })
+
+      if (result.compacted) {
+        console.log('🗜️ Auto-compaction completed:', result.stats)
+        // Replace messages with compacted version
+        await replaceMessages(result.messages)
+      }
+    } catch (error) {
+      console.error('Auto-compaction failed:', error)
+    }
+  }, [messages, summarizeWithLLM, replaceMessages])
+
+  // Initialize workspace management hook with summarize function
+  const {
+    workspaceName,
+    workspaceType,
+    openWorkspaceFolder,
+    changeWorkspace,
+    unlinkWorkspace,
+    triggerCompaction,
+    isCompacting
+  } = useWorkspaceManagement(currentConversationId, summarizeWithLLM)
+
+  // Initialize streaming message hook
+  const {
+    sendMessage,
+    retryMessage,
+    editMessage,
+    stopStreaming: stopCurrentStreaming,
+    isStreaming: hookIsStreaming
+  } = useStreamingMessage({
+    conversationId: currentConversationId,
+    onCompletionCheck: checkAndCompactConversation
+  })
 
   // Listen for OpenCode compaction events and sync messages
   useEffect(() => {
@@ -155,8 +211,8 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       window.electronAPI.window.setTitle(`ChatAnyLLM - ${folderName}`)
     }
   }, [currentConversationId, getWorkingDirectory])
+
   const { fetchModels } = useModelFetcher()
-  const { showMissingApiKeyAlert, showFetchErrorAlert, showInvalidApiKeyAlert } = useError()
 
   // Combine built-in and custom providers
   const allProviders = [...PROVIDERS, ...customProviders]
@@ -294,69 +350,6 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     }
   }, [currentConversationId, isLoading]) // Only run when switching conversations, not when user changes provider manually
 
-  // Summarize messages using LLM
-  const summarizeWithLLM = async (summaryPrompt) => {
-    return new Promise((resolve) => {
-      console.log('🔵 Calling LLM to summarize conversation...')
-      let summary = ''
-
-      // Get current provider API key
-      const currentApiKey = apiKeys[provider]
-      if (!currentApiKey) {
-        console.error('No API key available for summarization')
-        resolve('Earlier conversation (summary unavailable - no API key)')
-        return
-      }
-
-      try {
-        sendStreamingMessage({
-          providerId: provider,
-          apiKey: currentApiKey,
-          model,
-          messages: [{ role: 'user', content: summaryPrompt }],
-          onChunk: (chunk, fullContent) => {
-            summary = fullContent
-          },
-          onComplete: (fullContent) => {
-            console.log('✓ Summary generated:', fullContent?.substring(0, 100) + '...')
-            resolve(fullContent || summary || 'Earlier conversation (summary unavailable)')
-          },
-          onError: (err) => {
-            console.error('Summarization failed:', err)
-            resolve('Earlier conversation (summary unavailable)')
-          },
-          abortSignal: null,
-          conversationId: currentConversationId
-        })
-      } catch (error) {
-        console.error('Failed to generate summary:', error)
-        resolve('Earlier conversation (summary unavailable)')
-      }
-    })
-  }
-
-  // Check and perform auto-compaction after message completes
-  const checkAndCompactConversation = async () => {
-    try {
-      const result = await autoCompact(messages, summarizeWithLLM, {
-        messageThreshold: 40,
-        tokenThreshold: 60000,
-        keepLast: 15
-      })
-
-      if (result.compacted) {
-        console.log('🗜️ Auto-compaction completed:', result.stats)
-        setIsCompacting(true)
-        // Replace messages with compacted version
-        await replaceMessages(result.messages)
-        setIsCompacting(false)
-      }
-    } catch (error) {
-      console.error('Auto-compaction failed:', error)
-      setIsCompacting(false)
-    }
-  }
-
   const handleRefreshModels = async () => {
     if (needsApiKey && !hasApiKey) {
       showMissingApiKeyAlert(providerInfo.name, () => {
@@ -391,453 +384,37 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     }
   }
 
+  // Wrapper handlers that delegate to the hooks
   const handleSendMessage = async (messageContent, attachments = []) => {
-    // Use refs to get the absolutely latest model/provider selection
-    const currentModel = latestModelRef.current
-    const currentProvider = latestProviderRef.current
-
-    // Check if we have an API key
-    const apiKey = apiKeys[currentProvider]
-    if (!apiKey) {
-      const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
-      showMissingApiKeyAlert(providerName, () => {
-        if (onOpenSettings) onOpenSettings()
-      })
-      return
-    }
-
-    // Capture conversation ID at the very start (before any async operations)
-    const targetConversationId = currentConversationId
-
-    // Don't allow sending if this conversation is already streaming
-    if (isConversationStreaming(targetConversationId)) {
-      return
-    }
-
-    let assistantMessageId
-    try {
-      // Add user message with attachments to the captured conversation
-      await addMessage({
-        role: 'user',
-        content: messageContent,
-        model: currentModel,
-        provider: currentProvider,
-        attachments: attachments.length > 0 ? attachments : undefined
-      }, targetConversationId)
-
-      // Create placeholder for assistant message in the same conversation
-      const assistantMessage = await addMessage({
-        role: 'assistant',
-        content: '',
-        model: currentModel,
-        provider: currentProvider
-      }, targetConversationId)
-
-      // Store the assistant message ID for OpenCode activity tracking
-      assistantMessageId = assistantMessage.id
-    } catch (error) {
-      console.error('Error adding messages:', error)
-      const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
-      showFetchErrorAlert(providerName, 'Failed to save message. Please try again.')
-      return
-    }
-
-    // Build messages array for API call (since state may not be updated yet)
-    // Format current message with attachments for multimodal API
-    const currentUserMessage = formatMessageForAPI(
-      { role: 'user', content: messageContent },
-      attachments
-    )
-
-    // Format message history with attachments support
-    const messagesForApi = [
-      ...formatMessagesForAPI(messages),
-      currentUserMessage
-    ]
-
-    // Start streaming for this conversation
-    const abortSignal = startStreaming(targetConversationId)
-
-    // Create metadata for the response
-    const sendMetadata = {
-      timestamp: new Date().toISOString(),
-      model: currentModel,
-      provider: currentProvider
-    }
-
-    // Create streaming callbacks using utility
-    const streamingCallbacks = createStreamingCallbacks({
-      conversationId: targetConversationId,
-      updateLastMessage,
-      updateLastMessageReasoning,
-      markReasoningComplete,
-      getConversationById,
-      stopStreaming,
-      metadata: sendMetadata,
-      onCompletionCheck: checkAndCompactConversation,
-      onError: (error) => {
-        handleStreamingError({
-          error,
-          providerName: providerInfo.name,
-          errorHandlers: { showFetchErrorAlert, showInvalidApiKeyAlert, showMissingApiKeyAlert },
-          onOpenSettings
-        })
-      }
-    })
-
-    try {
-      // Create OpenCode callbacks that use the assistant message ID
-      const opencodeCallbacks = {
-        addOpencodeEvent: (event) => addOpencodeEvent(assistantMessageId, event),
-        setOpencodeStatus: (status) => setOpencodeStatus(assistantMessageId, status),
-        clearOpencodeActivity: () => clearOpencodeActivity(assistantMessageId),
-        setOpencodeProcessingText: (text) => setOpencodeProcessingText(assistantMessageId, text),
-        setOpencodePendingPermission: (permission) => setOpencodePendingPermission(assistantMessageId, permission)
-      }
-
-      await sendStreamingMessage({
-        providerId: currentProvider,
-        providerConfig: customProviders.find(p => p.id === currentProvider),
-        apiKey,
-        model: currentModel,
-        messages: messagesForApi,
-        ...streamingCallbacks,
-        abortSignal,
-        modalities: getModalitiesForCurrentModel(currentModel, currentProvider),
-        reasoning: isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null,
-        conversationId: targetConversationId,
-        useOpenCode: true, // Always use OpenCode
-        ...opencodeCallbacks
-      })
-    } catch (error) {
-      console.error('Unexpected error:', error)
-      stopStreaming(targetConversationId)
-    }
+    await sendMessage(messageContent, attachments, onOpenSettings)
   }
 
   const handleStopGeneration = () => {
-    // Stop streaming only for the current conversation
-    if (isConversationStreaming(currentConversationId)) {
-      stopStreaming(currentConversationId)
-    }
-  }
-
-  // Get workspace name for display
-  const getWorkspaceName = () => {
-    const workingDir = getWorkingDirectory(currentConversationId)
-    if (!workingDir) return 'Safe Workspace'
-
-    if (workingDir.type === 'isolated') {
-      return 'Safe Workspace'
-    }
-
-    // For linked folders, extract folder name
-    const parts = workingDir.path.split(/[/\\]/)
-    return parts[parts.length - 1] || parts[parts.length - 2] || 'Project'
-  }
-
-  // Open workspace folder in file explorer
-  const handleOpenWorkspaceFolder = async () => {
-    if (!isElectron()) return
-
-    const workingDir = getWorkingDirectory(currentConversationId)
-    if (workingDir?.path) {
-      try {
-        await window.electronAPI.shell.revealInFileExplorer(workingDir.path)
-      } catch (error) {
-        console.error('Failed to open folder:', error)
-      }
-    }
-  }
-
-  // Change workspace folder
-  const handleChangeWorkspace = async () => {
-    if (!isElectron()) return
-
-    try {
-      const result = await window.electronAPI.dialog.selectDirectory()
-      if (result.success && !result.canceled && result.filePath) {
-        await updateWorkingDirectory(currentConversationId, result.filePath, 'linked')
-      }
-    } catch (error) {
-      console.error('Failed to select directory:', error)
-    }
-  }
-
-  // Unlink workspace (return to safe workspace)
-  const handleUnlinkWorkspace = async () => {
-    if (!isElectron()) return
-
-    try {
-      const appDataPath = await window.electronAPI.getAppDataPath()
-      const isolatedPath = `${appDataPath}\\userfiles\\workspaces\\${currentConversationId}`
-      await updateWorkingDirectory(currentConversationId, isolatedPath, 'isolated')
-    } catch (error) {
-      console.error('Failed to unlink workspace:', error)
-    }
-  }
-
-  // Trigger compaction manually (user-initiated)
-  const handleTriggerCompaction = async () => {
-    try {
-      console.log('🔵 Manually triggering client-side compaction...')
-
-      // Check if there are enough messages to compact
-      if (messages.length < 3) {
-        console.log('❌ Need at least 3 messages to compact')
-        return
-      }
-
-      setIsCompacting(true)
-
-      // Force compaction - keep only last 2 messages to maximize compression
-      const result = await compactConversation(messages, summarizeWithLLM, {
-        keepLast: 2
-      })
-
-      if (result.compactedMessages) {
-        console.log('🗜️ Manual compaction completed:', result.stats)
-        await replaceMessages(result.compactedMessages)
-      }
-
-      setIsCompacting(false)
-    } catch (error) {
-      console.error('Failed to trigger compaction:', error)
-      setIsCompacting(false)
-    }
+    stopCurrentStreaming()
   }
 
   const handleRetry = async (assistantMessage) => {
-    if (isConversationStreaming(currentConversationId)) return
-
-    // Find the user message that triggered this assistant response
-    const messageIndex = messages.findIndex(m => m.id === assistantMessage.id)
-    if (messageIndex <= 0) return
-
-    // Get the user message before the assistant message
-    const userMessage = messages[messageIndex - 1]
-    if (userMessage.role !== 'user') return
-
-    // Check if we have an API key
-    const apiKey = apiKeys[provider]
-    if (!apiKey) {
-      showMissingApiKeyAlert(providerInfo.name, () => {
-        if (onOpenSettings) onOpenSettings()
-      })
-      return
-    }
-
-    // Use refs to get the absolutely latest model/provider selection
-    // This ensures we use the user's current selection even if React state hasn't updated yet
-    const currentModel = latestModelRef.current
-    const currentProvider = latestProviderRef.current
-
-    // Build messages for API call (all messages up to but not including this assistant response)
-    // Use formatMessagesForAPI to properly handle attachments
-    const messagesForApi = formatMessagesForAPI(messages.slice(0, messageIndex))
-
-    // Clear the assistant message content for regeneration
-    // First, clear with full metadata including reasoning reset
-    const clearMetadata = {
-      timestamp: new Date().toISOString(),
-      model: currentModel,
-      provider: currentProvider,
-      reasoning: '',
-      isReasoningComplete: false
-    }
-    updateLastMessage('', false, clearMetadata)
-
-    // Capture conversation ID at start of streaming
-    const retryConversationId = currentConversationId
-
-    // Start streaming
-    const abortSignal = startStreaming(retryConversationId)
-
-    // Create metadata for streaming updates (without reasoning fields to avoid overwrites)
-    const streamingMetadata = {
-      timestamp: new Date().toISOString(),
-      model: currentModel,
-      provider: currentProvider
-    }
-
-    // Create streaming callbacks using utility
-    const streamingCallbacks = createStreamingCallbacks({
-      conversationId: retryConversationId,
-      updateLastMessage,
-      updateLastMessageReasoning,
-      markReasoningComplete,
-      getConversationById,
-      stopStreaming,
-      metadata: streamingMetadata,
-      onCompletionCheck: checkAndCompactConversation,
-      onError: (error) => {
-        handleStreamingError({
-          error,
-          providerName: providerInfo.name,
-          errorHandlers: { showFetchErrorAlert, showInvalidApiKeyAlert, showMissingApiKeyAlert },
-          onOpenSettings
-        })
-      }
-    })
-
-    try {
-      const modalities = getModalitiesForCurrentModel(currentModel, currentProvider)
-      const reasoning = isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null
-
-      // Create OpenCode callbacks that use the assistant message ID
-      const opencodeCallbacks = {
-        addOpencodeEvent: (event) => addOpencodeEvent(assistantMessage.id, event),
-        setOpencodeStatus: (status) => setOpencodeStatus(assistantMessage.id, status),
-        clearOpencodeActivity: () => clearOpencodeActivity(assistantMessage.id),
-        setOpencodeProcessingText: (text) => setOpencodeProcessingText(assistantMessage.id, text),
-        setOpencodePendingPermission: (permission) => setOpencodePendingPermission(assistantMessage.id, permission)
-      }
-
-      await sendStreamingMessage({
-        providerId: currentProvider,
-        providerConfig: customProviders.find(p => p.id === currentProvider),
-        apiKey: apiKeys[currentProvider],
-        model: currentModel,
-        messages: messagesForApi,
-        ...streamingCallbacks,
-        abortSignal,
-        modalities,
-        reasoning,
-        conversationId: retryConversationId,
-        useOpenCode: true, // Always use OpenCode
-        ...opencodeCallbacks
-      })
-    } catch (error) {
-      console.error('Unexpected retry error:', error)
-      stopStreaming(retryConversationId)
-    }
+    await retryMessage(assistantMessage, onOpenSettings)
   }
 
   const handleEditUserMessage = async (userMessage, newContent) => {
-    if (isConversationStreaming(currentConversationId)) return
+    await editMessage(userMessage, newContent, onOpenSettings)
+  }
 
-    // Capture conversation ID at the very start (before any async operations)
-    const editConversationId = currentConversationId
+  const handleOpenWorkspaceFolder = async () => {
+    await openWorkspaceFolder()
+  }
 
-    // Use refs to get the absolutely latest model/provider selection
-    const currentModel = latestModelRef.current
-    const currentProvider = latestProviderRef.current
+  const handleChangeWorkspace = async () => {
+    await changeWorkspace()
+  }
 
-    // Find the index of the user message
-    const messageIndex = messages.findIndex(m => m.id === userMessage.id)
-    if (messageIndex < 0) return
+  const handleUnlinkWorkspace = async () => {
+    await unlinkWorkspace()
+  }
 
-    // Check if we have an API key
-    const apiKey = apiKeys[currentProvider]
-    if (!apiKey) {
-      const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
-      showMissingApiKeyAlert(providerName, () => {
-        if (onOpenSettings) onOpenSettings()
-      })
-      return
-    }
-
-    let messagesForApi
-    let editAssistantMessageId
-    try {
-      // Update the user message content in state
-      const updatedMessages = [...messages]
-      updatedMessages[messageIndex] = {
-        ...updatedMessages[messageIndex],
-        content: newContent,
-        timestamp: new Date().toISOString()
-      }
-
-      // Remove all messages after this user message (assistant response and any following)
-      const messagesUpToEdit = updatedMessages.slice(0, messageIndex + 1)
-
-      // Update state and storage immediately
-      await replaceMessages(messagesUpToEdit)
-
-      // Build messages for API call - use formatMessagesForAPI to properly handle attachments
-      messagesForApi = formatMessagesForAPI(messagesUpToEdit)
-
-      // Add new assistant placeholder to the captured conversation
-      const assistantMessage = await addMessage({
-        role: 'assistant',
-        content: '',
-        reasoning: '',
-        isReasoningComplete: false,
-        model: currentModel,
-        provider: currentProvider
-      }, editConversationId)
-
-      // Store the assistant message ID for OpenCode activity tracking
-      editAssistantMessageId = assistantMessage.id
-    } catch (error) {
-      console.error('Error editing message:', error)
-      const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
-      showFetchErrorAlert(providerName, 'Failed to edit message. Please try again.')
-      return
-    }
-
-    // Start streaming the new response
-    const abortSignal = startStreaming(editConversationId)
-
-    // Create metadata for the new response
-    const editMetadata = {
-      timestamp: new Date().toISOString(),
-      model: currentModel,
-      provider: currentProvider
-    }
-
-    // Create streaming callbacks using utility
-    const streamingCallbacks = createStreamingCallbacks({
-      conversationId: editConversationId,
-      updateLastMessage,
-      updateLastMessageReasoning,
-      markReasoningComplete,
-      getConversationById,
-      stopStreaming,
-      metadata: editMetadata,
-      onCompletionCheck: checkAndCompactConversation,
-      onError: (error) => {
-        const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
-        handleStreamingError({
-          error,
-          providerName: providerName,
-          errorHandlers: { showFetchErrorAlert, showInvalidApiKeyAlert, showMissingApiKeyAlert },
-          onOpenSettings
-        })
-      }
-    })
-
-    try {
-      const modalities = getModalitiesForCurrentModel(currentModel, currentProvider)
-      const reasoning = isModelThinking(currentModel, currentProvider) ? { effort: 'high' } : null
-
-      // Create OpenCode callbacks that use the assistant message ID
-      const opencodeCallbacks = {
-        addOpencodeEvent: (event) => addOpencodeEvent(editAssistantMessageId, event),
-        setOpencodeStatus: (status) => setOpencodeStatus(editAssistantMessageId, status),
-        clearOpencodeActivity: () => clearOpencodeActivity(editAssistantMessageId),
-        setOpencodeProcessingText: (text) => setOpencodeProcessingText(editAssistantMessageId, text),
-        setOpencodePendingPermission: (permission) => setOpencodePendingPermission(editAssistantMessageId, permission)
-      }
-
-      await sendStreamingMessage({
-        providerId: currentProvider,
-        providerConfig: customProviders.find(p => p.id === currentProvider),
-        apiKey,
-        model: currentModel,
-        messages: messagesForApi,
-        ...streamingCallbacks,
-        abortSignal,
-        modalities,
-        reasoning,
-        conversationId: editConversationId,
-        useOpenCode: true, // Always use OpenCode
-        ...opencodeCallbacks
-      })
-    } catch (error) {
-      console.error('Unexpected edit error:', error)
-      stopStreaming(editConversationId)
-    }
+  const handleTriggerCompaction = async () => {
+    await triggerCompaction()
   }
 
   // Show loading state while initial data loads
@@ -872,254 +449,69 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     )
   }
 
+  // Provider change handler with model auto-selection
+  const handleProviderChange = (value) => {
+    setProvider(value)
+    // Auto-select first model when cached models load
+    const cached = getModelsForProvider(value)
+    const fallback = getFallbackModels(value)
+    const models = cached.length > 0 ? cached : fallback
+    if (models.length > 0) {
+      setModel(models[0].id)
+    }
+  }
+
+  // Model change handler
+  const handleModelChange = (value) => {
+    setModel(value)
+  }
+
+  // Streaming state calculations
+  const isCurrentStreaming = isConversationStreaming(currentConversationId)
+  const isAnyOtherStreaming = Array.from(streamingConversationIds).some(id => id !== currentConversationId)
+
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
-      {/* Header with Provider/Model Selection */}
-      <div className="border-b px-6 py-4 bg-muted/10">
-        <div className="flex items-center gap-6">
-          {/* Sidebar Toggle Button */}
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onToggleSidebar}
-                  className="h-16 w-16 flex-shrink-0"
-                >
-                  {sidebarOpen ? (
-                    <ChevronsLeftIcon size={28} />
-                  ) : (
-                    <ChevronsRightIcon size={28} />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8} className="font-medium">
-                <p className="text-sm">
-                  {sidebarOpen ? 'Collapse' : 'Expand'} sidebar
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  <kbd className="inline-flex h-4 select-none items-center gap-1 rounded border bg-muted px-1 font-mono text-[10px] font-medium">
-                    {navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+B'}
-                  </kbd>
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+      <ChatHeader
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={onToggleSidebar}
+        provider={provider}
+        model={model}
+        allProviders={allProviders}
+        currentModels={currentModels}
+        onProviderChange={handleProviderChange}
+        onModelChange={handleModelChange}
+        fetchStatus={fetchStatus}
+        usingFallback={usingFallback}
+        onRefreshModels={handleRefreshModels}
+      />
 
-          {/* Provider/Model Selection Container */}
-          <div className="border rounded-xl p-3 flex items-center gap-3 w-fit shadow-sm bg-background">
-          <Badge variant="secondary" className="text-sm px-3 py-1 bg-muted text-foreground hover:bg-muted pointer-events-none">Provider</Badge>
-          <SearchableSelect
-            value={provider}
-            onValueChange={(value) => {
-              // Update ref IMMEDIATELY (synchronously) before state updates
-              latestProviderRef.current = value
-              setProvider(value)
-              // Auto-select first model when cached models load
-              const cached = getModelsForProvider(value)
-              const fallback = getFallbackModels(value)
-              const models = cached.length > 0 ? cached : fallback
-              if (models.length > 0) {
-                latestModelRef.current = models[0].id
-                setModel(models[0].id)
-              }
-            }}
-            options={allProviders}
-            placeholder="Select provider..."
-            searchPlaceholder="Search providers..."
-            showDescription={true}
-            className="h-10 text-base"
-          />
+      <MessageArea
+        messages={messages}
+        currentConversationId={currentConversationId}
+        onRetry={handleRetry}
+        onEditUserMessage={handleEditUserMessage}
+        onDeleteMessage={deleteMessage}
+        isStreaming={isCurrentStreaming}
+        isCompacting={isCompacting}
+        getOpencodeActivity={getOpencodeActivity}
+        getWorkingDirectory={getWorkingDirectory}
+      />
 
-          <Separator orientation="vertical" className="h-6" />
-
-          <Badge variant="secondary" className="text-sm px-3 py-1 bg-muted text-foreground hover:bg-muted pointer-events-none">Model</Badge>
-          <SearchableSelect
-            value={model}
-            onValueChange={(value) => {
-              // Update ref IMMEDIATELY (synchronously) before state updates
-              latestModelRef.current = value
-              setModel(value)
-            }}
-            options={currentModels}
-            placeholder={
-              fetchStatus.loading
-                ? 'Loading models...'
-                : fetchStatus.errorType === ERROR_TYPES.NO_API_KEY
-                ? 'Configure API key first'
-                : fetchStatus.errorType === ERROR_TYPES.INVALID_KEY
-                ? 'Invalid API key'
-                : fetchStatus.error
-                ? 'Error loading models'
-                : currentModels.length === 0
-                ? 'No models available'
-                : 'Select model...'
-            }
-            searchPlaceholder="Search models..."
-            showDescription={true}
-            className="h-10 min-w-[240px] text-base"
-            loading={fetchStatus.loading}
-            error={fetchStatus.error}
-          />
-
-          {/* Context-aware warning badges */}
-          {fetchStatus.errorType === ERROR_TYPES.NO_API_KEY && (
-            <Badge variant="outline" className="text-red-600 border-red-600 h-10 px-3 text-sm">
-              <KeyIcon className="h-4 w-4 mr-2" />
-              API Key Required
-            </Badge>
-          )}
-          {fetchStatus.errorType === ERROR_TYPES.INVALID_KEY && (
-            <Badge variant="outline" className="text-red-600 border-red-600 h-10 px-3 text-sm">
-              <AlertTriangleIcon className="h-4 w-4 mr-2" />
-              Invalid API Key
-            </Badge>
-          )}
-          {fetchStatus.errorType === ERROR_TYPES.NETWORK_ERROR && usingFallback && (
-            <Badge variant="outline" className="text-blue-600 border-blue-600 h-10 px-3 text-sm">
-              <WifiOffIcon className="h-4 w-4 mr-2" />
-              Network Error - Using Fallback
-            </Badge>
-          )}
-          {fetchStatus.errorType === ERROR_TYPES.OTHER_ERROR && usingFallback && (
-            <Badge variant="outline" className="text-yellow-600 border-yellow-600 h-10 px-3 text-sm">
-              <AlertTriangleIcon className="h-4 w-4 mr-2" />
-              Using Fallback Models
-            </Badge>
-          )}
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10"
-            onClick={handleRefreshModels}
-            disabled={fetchStatus.loading}
-            title="Refresh models"
-          >
-            <RefreshCwIcon className={`h-5 w-5 ${fetchStatus.loading ? 'animate-spin' : ''}`} />
-          </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Main content area - show empty state or messages */}
-      {messages.length === 0 ? (
-        <EmptyStatePrompt conversationId={currentConversationId} />
-      ) : (
-        <>
-          <MessageList
-            messages={messages}
-            onRetry={handleRetry}
-            onEditUserMessage={handleEditUserMessage}
-            onDeleteMessage={deleteMessage}
-            isStreaming={isConversationStreaming(currentConversationId)}
-            getOpencodeActivity={getOpencodeActivity}
-            currentConversationId={currentConversationId}
-            getWorkingDirectory={getWorkingDirectory}
-          />
-
-          {/* Compacting indicator */}
-          {isCompacting && (
-            <div className="flex items-center justify-center gap-3 py-6 text-muted-foreground">
-              <div className="flex-1 h-px bg-border"></div>
-              <div className="flex items-center gap-2">
-                <Loader className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Compacting conversation</span>
-              </div>
-              <div className="flex-1 h-px bg-border"></div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Message input - no workspace UI visible after conversation starts */}
-      {(() => {
-        const isCurrentStreaming = isConversationStreaming(currentConversationId)
-        const isAnyOtherStreaming = Array.from(streamingConversationIds).some(id => id !== currentConversationId)
-
-        // If compacting, show disabled input with tooltip
-        if (isCompacting) {
-          return (
-            <MessageInput
-              onSendMessage={handleSendMessage}
-              isStreaming={false}
-              onStopGeneration={handleStopGeneration}
-              disabled={true}
-              disabledTooltip="Compacting conversation"
-            />
-          )
-        }
-
-        // If another conversation is streaming, show disabled input with tooltip on send button
-        if (isAnyOtherStreaming) {
-          return (
-            <MessageInput
-              onSendMessage={handleSendMessage}
-              isStreaming={false}
-              onStopGeneration={handleStopGeneration}
-              disabled={true}
-              disabledTooltip="Another conversation is streaming"
-            />
-          )
-        }
-
-        // Normal input for current conversation
-        return (
-          <MessageInput
-            onSendMessage={handleSendMessage}
-            isStreaming={isCurrentStreaming}
-            onStopGeneration={handleStopGeneration}
-            disabled={false}
-          />
-        )
-      })()}
-
-      {/* Workspace indicator - clear footer below input */}
-      {isElectron() && messages.length > 0 && (
-        <div className="px-6 py-2 border-t border-border/50 bg-muted/10">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleOpenWorkspaceFolder}
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-2 transition-colors group"
-              title="Click to open workspace folder in explorer"
-            >
-              <Folder className="w-3.5 h-3.5" />
-              <span className="font-medium">Workspace:</span>
-              <span className="group-hover:underline">{getWorkspaceName()}</span>
-              <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </button>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-5 w-5 p-0 -ml-1">
-                  <MoreVertical className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem onClick={handleOpenWorkspaceFolder}>
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Open in Explorer
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleChangeWorkspace}>
-                  <FolderOpen className="h-4 w-4 mr-2" />
-                  Change Folder
-                </DropdownMenuItem>
-                {getWorkingDirectory(currentConversationId)?.type === 'linked' && (
-                  <DropdownMenuItem onClick={handleUnlinkWorkspace}>
-                    <X className="h-4 w-4 mr-2" />
-                    Return to Safe Workspace
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={handleTriggerCompaction}>
-                  <Archive className="h-4 w-4 mr-2" />
-                  Summarize Old Messages
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      )}
+      <MessageInputArea
+        onSendMessage={handleSendMessage}
+        onStopGeneration={handleStopGeneration}
+        isCurrentStreaming={isCurrentStreaming}
+        isAnyOtherStreaming={isAnyOtherStreaming}
+        isCompacting={isCompacting}
+        workspaceName={workspaceName}
+        workspaceType={workspaceType}
+        hasMessages={messages.length > 0}
+        onOpenWorkspaceFolder={handleOpenWorkspaceFolder}
+        onChangeWorkspace={handleChangeWorkspace}
+        onUnlinkWorkspace={handleUnlinkWorkspace}
+        onTriggerCompaction={handleTriggerCompaction}
+      />
     </div>
   )
 }
