@@ -16,13 +16,15 @@ import { useConversation } from '@/contexts/ConversationContext'
 import { useModelFetcher, ERROR_TYPES } from '@/hooks/useModelFetcher'
 import { useError } from '@/contexts/ErrorContext'
 import { sendStreamingMessage } from '@/services/chat/chatClient'
-import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink, MoreVertical, FolderOpen, X } from 'lucide-react'
+import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink, MoreVertical, FolderOpen, X, Archive } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { formatMessageForAPI, formatMessagesForAPI } from '@/utils/messageFormatters'
 import { isThinkingModel, isImageGenerationModel, getModalitiesForModel } from '@/utils/modelHelpers'
 import { handleStreamingError } from '@/utils/errorHandlers'
 import { createStreamingCallbacks } from '@/utils/streamingHelpers'
+import { autoCompact, compactConversation } from '@/utils/compaction'
 import { isElectron } from '@/lib/electron'
+import { Loader } from 'lucide-react'
 
 function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSidebar }) {
   const {
@@ -76,6 +78,63 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     setOpencodeProcessingText,
     setOpencodePendingPermission
   } = useConversation()
+
+  const [isCompacting, setIsCompacting] = useState(false)
+
+  // Listen for OpenCode compaction events and sync messages
+  useEffect(() => {
+    const handleCompaction = async (event) => {
+      const { conversationId, messages: opencodeMessages } = event.detail
+
+      // Only sync if this is the current conversation
+      if (conversationId !== currentConversationId) return
+
+      console.log('🗜️ Syncing conversation with OpenCode compacted state')
+
+      try {
+        // Convert OpenCode messages to ChatAnyLLM format
+        const syncedMessages = []
+
+        for (const opencodeMsg of opencodeMessages) {
+          // Check if any part is a compaction
+          const compactionPart = opencodeMsg.parts.find(p => p.type === 'compaction')
+
+          if (compactionPart) {
+            // Add compaction as a special message
+            syncedMessages.push({
+              id: compactionPart.id,
+              role: 'system',
+              type: 'compaction',
+              content: 'Earlier messages summarized',
+              timestamp: new Date().toISOString(),
+              compactedBy: 'opencode'
+            })
+          }
+
+          // Add text parts as regular messages
+          const textParts = opencodeMsg.parts.filter(p => p.type === 'text')
+          if (textParts.length > 0 && opencodeMsg.info) {
+            const content = textParts.map(p => p.text).join('\n')
+            syncedMessages.push({
+              id: opencodeMsg.info.id,
+              role: opencodeMsg.info.role,
+              content,
+              timestamp: new Date(opencodeMsg.info.time.created).toISOString()
+            })
+          }
+        }
+
+        // Replace conversation messages with OpenCode's state
+        await replaceMessages(syncedMessages)
+        console.log('✓ Conversation synced with OpenCode:', syncedMessages.length, 'messages')
+      } catch (error) {
+        console.error('Failed to sync compacted messages:', error)
+      }
+    }
+
+    window.addEventListener('opencode:compacted', handleCompaction)
+    return () => window.removeEventListener('opencode:compacted', handleCompaction)
+  }, [currentConversationId, replaceMessages])
 
   // Update window title based on workspace
   useEffect(() => {
@@ -235,6 +294,69 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     }
   }, [currentConversationId, isLoading]) // Only run when switching conversations, not when user changes provider manually
 
+  // Summarize messages using LLM
+  const summarizeWithLLM = async (summaryPrompt) => {
+    return new Promise((resolve) => {
+      console.log('🔵 Calling LLM to summarize conversation...')
+      let summary = ''
+
+      // Get current provider API key
+      const currentApiKey = apiKeys[provider]
+      if (!currentApiKey) {
+        console.error('No API key available for summarization')
+        resolve('Earlier conversation (summary unavailable - no API key)')
+        return
+      }
+
+      try {
+        sendStreamingMessage({
+          providerId: provider,
+          apiKey: currentApiKey,
+          model,
+          messages: [{ role: 'user', content: summaryPrompt }],
+          onChunk: (chunk, fullContent) => {
+            summary = fullContent
+          },
+          onComplete: (fullContent) => {
+            console.log('✓ Summary generated:', fullContent?.substring(0, 100) + '...')
+            resolve(fullContent || summary || 'Earlier conversation (summary unavailable)')
+          },
+          onError: (err) => {
+            console.error('Summarization failed:', err)
+            resolve('Earlier conversation (summary unavailable)')
+          },
+          abortSignal: null,
+          conversationId: currentConversationId
+        })
+      } catch (error) {
+        console.error('Failed to generate summary:', error)
+        resolve('Earlier conversation (summary unavailable)')
+      }
+    })
+  }
+
+  // Check and perform auto-compaction after message completes
+  const checkAndCompactConversation = async () => {
+    try {
+      const result = await autoCompact(messages, summarizeWithLLM, {
+        messageThreshold: 40,
+        tokenThreshold: 60000,
+        keepLast: 15
+      })
+
+      if (result.compacted) {
+        console.log('🗜️ Auto-compaction completed:', result.stats)
+        setIsCompacting(true)
+        // Replace messages with compacted version
+        await replaceMessages(result.messages)
+        setIsCompacting(false)
+      }
+    } catch (error) {
+      console.error('Auto-compaction failed:', error)
+      setIsCompacting(false)
+    }
+  }
+
   const handleRefreshModels = async () => {
     if (needsApiKey && !hasApiKey) {
       showMissingApiKeyAlert(providerInfo.name, () => {
@@ -352,6 +474,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       getConversationById,
       stopStreaming,
       metadata: sendMetadata,
+      onCompletionCheck: checkAndCompactConversation,
       onError: (error) => {
         handleStreamingError({
           error,
@@ -454,6 +577,36 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     }
   }
 
+  // Trigger compaction manually (user-initiated)
+  const handleTriggerCompaction = async () => {
+    try {
+      console.log('🔵 Manually triggering client-side compaction...')
+
+      // Check if there are enough messages to compact
+      if (messages.length < 3) {
+        console.log('❌ Need at least 3 messages to compact')
+        return
+      }
+
+      setIsCompacting(true)
+
+      // Force compaction - keep only last 2 messages to maximize compression
+      const result = await compactConversation(messages, summarizeWithLLM, {
+        keepLast: 2
+      })
+
+      if (result.compactedMessages) {
+        console.log('🗜️ Manual compaction completed:', result.stats)
+        await replaceMessages(result.compactedMessages)
+      }
+
+      setIsCompacting(false)
+    } catch (error) {
+      console.error('Failed to trigger compaction:', error)
+      setIsCompacting(false)
+    }
+  }
+
   const handleRetry = async (assistantMessage) => {
     if (isConversationStreaming(currentConversationId)) return
 
@@ -516,6 +669,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       getConversationById,
       stopStreaming,
       metadata: streamingMetadata,
+      onCompletionCheck: checkAndCompactConversation,
       onError: (error) => {
         handleStreamingError({
           error,
@@ -641,6 +795,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       getConversationById,
       stopStreaming,
       metadata: editMetadata,
+      onCompletionCheck: checkAndCompactConversation,
       onError: (error) => {
         const providerName = getProviderById(currentProvider)?.name || customProviders.find(p => p.id === currentProvider)?.name
         handleStreamingError({
@@ -852,22 +1007,49 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       {messages.length === 0 ? (
         <EmptyStatePrompt conversationId={currentConversationId} />
       ) : (
-        <MessageList
-          messages={messages}
-          onRetry={handleRetry}
-          onEditUserMessage={handleEditUserMessage}
-          onDeleteMessage={deleteMessage}
-          isStreaming={isConversationStreaming(currentConversationId)}
-          getOpencodeActivity={getOpencodeActivity}
-          currentConversationId={currentConversationId}
-          getWorkingDirectory={getWorkingDirectory}
-        />
+        <>
+          <MessageList
+            messages={messages}
+            onRetry={handleRetry}
+            onEditUserMessage={handleEditUserMessage}
+            onDeleteMessage={deleteMessage}
+            isStreaming={isConversationStreaming(currentConversationId)}
+            getOpencodeActivity={getOpencodeActivity}
+            currentConversationId={currentConversationId}
+            getWorkingDirectory={getWorkingDirectory}
+          />
+
+          {/* Compacting indicator */}
+          {isCompacting && (
+            <div className="flex items-center justify-center gap-3 py-6 text-muted-foreground">
+              <div className="flex-1 h-px bg-border"></div>
+              <div className="flex items-center gap-2">
+                <Loader className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Compacting conversation</span>
+              </div>
+              <div className="flex-1 h-px bg-border"></div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Message input - no workspace UI visible after conversation starts */}
       {(() => {
         const isCurrentStreaming = isConversationStreaming(currentConversationId)
         const isAnyOtherStreaming = Array.from(streamingConversationIds).some(id => id !== currentConversationId)
+
+        // If compacting, show disabled input with tooltip
+        if (isCompacting) {
+          return (
+            <MessageInput
+              onSendMessage={handleSendMessage}
+              isStreaming={false}
+              onStopGeneration={handleStopGeneration}
+              disabled={true}
+              disabledTooltip="Compacting conversation"
+            />
+          )
+        }
 
         // If another conversation is streaming, show disabled input with tooltip on send button
         if (isAnyOtherStreaming) {
@@ -929,6 +1111,10 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
                     Return to Safe Workspace
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem onClick={handleTriggerCompaction}>
+                  <Archive className="h-4 w-4 mr-2" />
+                  Summarize Old Messages
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

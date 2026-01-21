@@ -96,6 +96,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     respondPermission: (requestID, reply, directory, message) =>
       ipcRenderer.invoke('opencode:respondPermission', { requestID, reply, directory, message }),
 
+    getSessionMessages: (conversationId) =>
+      ipcRenderer.invoke('opencode:getSessionMessages', conversationId),
+
+    triggerCompaction: (conversationId, providerId, modelId) =>
+      ipcRenderer.invoke('opencode:triggerCompaction', conversationId, providerId, modelId),
+
     onEvent: (callback) => {
       const subscription = (event, data) => callback(data)
       ipcRenderer.on('opencode:event', subscription)

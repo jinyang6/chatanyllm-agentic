@@ -25,7 +25,8 @@ export function createStreamingCallbacks({
   getConversationById,
   stopStreaming,
   onError,
-  metadata = null
+  metadata = null,
+  onCompletionCheck = null
 }) {
   return {
     onChunk: (chunk, fullContent) => {
@@ -57,6 +58,11 @@ export function createStreamingCallbacks({
 
       updateLastMessage(fullContent, true, finalMetadata, conversationId)
       stopStreaming(conversationId)
+
+      // Trigger compaction check after message completes
+      if (onCompletionCheck) {
+        onCompletionCheck().catch(err => console.error('Compaction check failed:', err))
+      }
     },
 
     onError: (error) => {

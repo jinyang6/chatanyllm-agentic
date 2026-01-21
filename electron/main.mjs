@@ -561,6 +561,66 @@ if (process.platform === 'win32') {
 
 // ===== OpenCode Update Management =====
 
+// Get messages from OpenCode session
+ipcMain.handle('opencode:getSessionMessages', async (event, conversationId) => {
+  if (!opencodeClient) {
+    return { success: false, error: 'OpenCode client not initialized' }
+  }
+
+  const sessionData = opencodeSessions.get(conversationId)
+  if (!sessionData) {
+    return { success: false, error: 'No OpenCode session for this conversation' }
+  }
+
+  try {
+    const response = await opencodeClient.session.messages({
+      path: { id: sessionData.sessionId }
+    })
+
+    return {
+      success: true,
+      messages: response.data || []
+    }
+  } catch (error) {
+    console.error('Failed to get session messages:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// Trigger manual compaction for testing
+ipcMain.handle('opencode:triggerCompaction', async (event, conversationId, providerId, modelId) => {
+  if (!opencodeClient) {
+    return { success: false, error: 'OpenCode client not initialized' }
+  }
+
+  const sessionData = opencodeSessions.get(conversationId)
+  if (!sessionData) {
+    return { success: false, error: 'No OpenCode session for this conversation' }
+  }
+
+  try {
+    console.log('🔵 Manually triggering compaction for session:', sessionData.sessionId)
+
+    const response = await opencodeClient.session.summarize({
+      path: { id: sessionData.sessionId },
+      body: {
+        providerID: providerId,
+        modelID: modelId
+      }
+    })
+
+    console.log('✓ Compaction triggered, result:', response.data)
+
+    return {
+      success: true,
+      result: response.data
+    }
+  } catch (error) {
+    console.error('Failed to trigger compaction:', error)
+    return { success: false, error: error.message }
+  }
+})
+
 // Get current OpenCode version
 ipcMain.handle('opencode:getVersion', async () => {
   try {

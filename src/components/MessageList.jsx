@@ -18,6 +18,35 @@ import { formatFileSize } from '@/utils/messageFormatters'
 import { ImagePreviewModal } from '@/components/ImagePreviewModal'
 import { downloadImage, extractImageName } from '@/utils/imageDownload'
 
+// Compaction Message Component - shows expandable summary
+const CompactionMessage = ({ message }) => {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="my-6">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-border"></div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground px-2 hover:text-foreground transition-colors cursor-pointer"
+        >
+          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          Earlier messages summarized ({message.compactedCount || 'multiple'} messages)
+        </button>
+        <div className="flex-1 h-px bg-border"></div>
+      </div>
+
+      {expanded && message.content && (
+        <div className="mt-4 mx-8 p-4 bg-muted/30 rounded-lg border border-border">
+          <div className="text-sm text-muted-foreground whitespace-pre-wrap">
+            {message.content}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Workspace Image Component - loads images from workspace
 const WorkspaceImage = ({ src, alt, currentConversationId, getWorkingDirectory, setPreviewImage }) => {
   const [imageSrc, setImageSrc] = useState(src)
@@ -463,6 +492,11 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
           const isGenerating = isStreaming && isLastMessage && message.role === 'assistant'
           const { cleanContent, images: generatedImages } = parseGeneratedImages(message.content)
           const opencodeActivity = getOpencodeActivity ? getOpencodeActivity(message.id) : null
+
+          // Render compaction message as expandable summary
+          if (message.type === 'compaction') {
+            return <CompactionMessage key={message.id} message={message} />
+          }
 
           return (
             <div

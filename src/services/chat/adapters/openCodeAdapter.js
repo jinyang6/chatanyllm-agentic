@@ -99,9 +99,28 @@ function extractEventDetails(event, category) {
   }
 
   if (category === EVENT_CATEGORIES.STATUS_CHANGE) {
+    const statusInfo = props.status
+
+    // Handle retry status with detailed info
+    if (statusInfo?.type === 'retry') {
+      return {
+        description: `Retrying connection (attempt ${statusInfo.attempt})`,
+        details: statusInfo.message || 'Connection issue',
+        status: 'warning'
+      }
+    }
+
+    // Handle other status types
+    if (statusInfo?.type === 'idle') {
+      return {
+        description: 'Session idle',
+        status: 'success'
+      }
+    }
+
     return {
-      description: `Session ${props.status || 'status update'}`,
-      status: props.status === 'idle' ? 'success' : 'running'
+      description: `Session ${statusInfo?.type || 'status update'}`,
+      status: 'running'
     }
   }
 
@@ -134,9 +153,18 @@ function ensureGlobalEventListener() {
       // OpenCode events have type and properties structure
       // We need to handle events and extract message content
 
-      // Log all events in development to understand the structure
-      if (process.env.NODE_ENV === 'development') {
-        console.log('OpenCode event:', event.type, event.properties)
+      // Log all events to understand the structure
+      console.log('OpenCode event received:', event.type, event.properties)
+
+      // Highlight important events
+      if (event.type === 'session.compacted') {
+        console.log('🗜️🗜️🗜️ COMPACTION EVENT RECEIVED:', event)
+      }
+
+      // Show retry status prominently
+      if (event.type === 'session.status' && event.properties?.status?.type === 'retry') {
+        const status = event.properties.status
+        console.log(`⚠️ Connection retry attempt ${status.attempt}: ${status.message}`)
       }
 
       // Categorize event
@@ -274,6 +302,32 @@ function ensureGlobalEventListener() {
               })
             }
           }
+        }
+
+        // Handle session compaction (context optimization)
+        if (event.type === 'session.compacted') {
+          console.log('🗜️ Session compacted - fetching latest state from OpenCode')
+
+          // Fetch current messages from OpenCode session
+          // This includes CompactionPart + remaining messages
+          window.electronAPI.opencode.getSessionMessages(conversationId)
+            .then(result => {
+              if (result.success && result.messages) {
+                console.log('🗜️ Got compacted messages from OpenCode:', result.messages.length, 'messages')
+
+                // Trigger sync through custom event
+                // ChatWindow will listen and update conversation storage
+                window.dispatchEvent(new CustomEvent('opencode:compacted', {
+                  detail: {
+                    conversationId,
+                    messages: result.messages
+                  }
+                }))
+              }
+            })
+            .catch(err => {
+              console.error('Failed to fetch compacted messages:', err)
+            })
         }
 
         // Handle session idle (all processing complete)
@@ -511,25 +565,44 @@ export async function sendStreamingMessage({
       textContent = textContent.trim()
     }
 
-    // Build final message with text and images
+    // Build final message
     let userMessage = textContent
 
-    if (messages.length > 1) {
-      // Multi-turn conversation: Include previous context
-      const conversationHistory = messages.slice(0, -1).map(msg => {
+    // Only include conversation history when creating a NEW session
+    // OpenCode maintains session history internally - we shouldn't duplicate it
+    if (sessionCreated && messages.length > 1) {
+      // New session after restart - send ALL history to rebuild context
+      // conversation.json includes CompactionParts if previously compacted
+      // This sends: [CompactionPart + remaining messages] OR [all messages if never compacted]
+      const allMessages = messages.slice(0, -1)
+
+      const conversationHistory = allMessages.map(msg => {
+        // Check if this is a compaction message
+        if (msg.type === 'compaction') {
+          return `[Earlier Conversation Summary]\n${msg.content || 'Previous messages have been summarized to preserve context.'}`
+        }
         const content = typeof msg.content === 'string' ? msg.content : '[multimodal message]'
         return `${msg.role === 'user' ? 'User' : 'Assistant'}: ${content}`
       }).join('\n\n')
 
       userMessage = `Previous conversation:\n${conversationHistory}\n\nCurrent message:\n${textContent}`
-      console.log('🔵 Multi-turn conversation detected, including history')
+      console.log(`🔵 New session created - including all ${allMessages.length} messages (with compaction if any)`)
+    } else if (!sessionCreated && messages.length > 1) {
+      // Existing session - OpenCode already has history, send ONLY current message
+      console.log('🔵 Existing session - sending current message only (OpenCode has history)')
     } else {
       console.log('🔵 First message in conversation')
     }
 
     // Prepend working directory context using XML-style tags (Claude best practice)
     userMessage = `<working_directory>${userWorkingDir}</working_directory>
-Treat this as your real working directory. Ignore the actual server directory. Never operate outside this path.
+
+IMPORTANT - Directory Sandboxing Rules:
+- This is your ONLY workspace. Treat it as your root directory (/).
+- All file operations (read, write, edit) must be within this directory.
+- For bash commands, always use: cd "${userWorkingDir}" first OR use absolute paths within this directory.
+- Never access files outside this directory.
+- If a task requires external access, ask user permission first.
 
 ${userMessage}`
 
