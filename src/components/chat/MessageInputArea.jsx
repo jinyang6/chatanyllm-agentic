@@ -3,13 +3,14 @@
  * Handles message input with streaming state and workspace footer
  */
 
+import { forwardRef, useRef, useImperativeHandle } from 'react'
 import MessageInput from '@/components/MessageInput'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Folder, ExternalLink, MoreVertical, FolderOpen, X, Archive } from 'lucide-react'
 import { isElectron } from '@/lib/electron'
 
-export function MessageInputArea({
+export const MessageInputArea = forwardRef(function MessageInputArea({
   // Message handlers
   onSendMessage,
   onStopGeneration,
@@ -27,7 +28,17 @@ export function MessageInputArea({
   onChangeWorkspace,
   onUnlinkWorkspace,
   onTriggerCompaction
-}) {
+}, ref) {
+  const messageInputRef = useRef(null)
+
+  // Expose handleFileDrop method to parent
+  useImperativeHandle(ref, () => ({
+    handleFileDrop: (files) => {
+      if (messageInputRef.current) {
+        messageInputRef.current.handleFileDrop(files)
+      }
+    }
+  }), [])
   // Determine input state based on streaming/compacting status
   const getInputState = () => {
     if (isCompacting) {
@@ -59,6 +70,7 @@ export function MessageInputArea({
     <>
       {/* Message Input */}
       <MessageInput
+        ref={messageInputRef}
         onSendMessage={onSendMessage}
         isStreaming={inputState.isStreaming}
         onStopGeneration={onStopGeneration}
@@ -99,7 +111,7 @@ export function MessageInputArea({
                 {workspaceType === 'linked' && (
                   <DropdownMenuItem onClick={onUnlinkWorkspace}>
                     <X className="h-4 w-4 mr-2" />
-                    Return to Safe Workspace
+                    Return to Default Workspace
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem onClick={onTriggerCompaction}>
@@ -113,4 +125,4 @@ export function MessageInputArea({
       )}
     </>
   )
-}
+})

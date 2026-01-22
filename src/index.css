@@ -15,6 +15,11 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+  /* Disable text selection by default */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 #root {
@@ -144,4 +149,43 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Text Selection Rules */
+/* Enable selection for actual content */
+textarea,
+input[type="text"],
+input[type="search"],
+input[type="email"],
+input[type="url"],
+[contenteditable="true"],
+code,
+pre {
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+/* Enable selection for message content - use data attribute for specificity */
+[data-message-content],
+.message-content,
+.markdown-content,
+.prose {
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+/* Ensure buttons, badges, and UI controls are not selectable */
+button,
+[role="button"],
+.badge,
+.dropdown,
+.tooltip {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }

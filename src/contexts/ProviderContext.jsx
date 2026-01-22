@@ -226,10 +226,30 @@ export function ProviderProvider({ children }) {
       const age = Date.now() - cached.lastFetched
       const isStale = age > 24 * 60 * 60 * 1000 // 24 hours
       if (!isStale) {
-        return cached.models
+        const models = cached.models
+
+        // Sort OpenRouter models to show recommended model first
+        if (providerId === 'openrouter') {
+          return sortOpenRouterModels(models)
+        }
+
+        return models
       }
     }
     return []
+  }
+
+  const sortOpenRouterModels = (models) => {
+    const RECOMMENDED_MODEL = 'google/gemini-3-flash-preview'
+
+    return [...models].sort((a, b) => {
+      // Recommended model always first
+      if (a.id === RECOMMENDED_MODEL) return -1
+      if (b.id === RECOMMENDED_MODEL) return 1
+
+      // Then alphabetically by name
+      return a.name.localeCompare(b.name)
+    })
   }
 
   const setModelsFetchLoading = (providerId, loading) => {

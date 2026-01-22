@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { ChatHeader } from './chat/ChatHeader'
 import { MessageArea } from './chat/MessageArea'
 import { MessageInputArea } from './chat/MessageInputArea'
@@ -18,7 +18,7 @@ import { useStreamingMessage } from '@/hooks/useStreamingMessage'
 import { useWorkspaceManagement } from '@/hooks/useWorkspaceManagement'
 import { useMessageOperations } from '@/hooks/useMessageOperations'
 import { sendStreamingMessage } from '@/services/chat/chatClient'
-import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink, MoreVertical, FolderOpen, X, Archive } from 'lucide-react'
+import { RefreshCw as RefreshCwIcon, AlertTriangle as AlertTriangleIcon, WifiOff as WifiOffIcon, Key as KeyIcon, PanelLeftClose as ChevronsLeftIcon, PanelLeftOpen as ChevronsRightIcon, Bot, Folder, ExternalLink, MoreVertical, FolderOpen, X, Archive, Upload as UploadIcon } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { isThinkingModel, isImageGenerationModel, getModalitiesForModel } from '@/utils/modelHelpers'
 import { autoCompact, compactConversation } from '@/utils/compaction'
@@ -26,7 +26,17 @@ import { isElectron } from '@/lib/electron'
 import { Loader } from 'lucide-react'
 import { COMPACTION_CONFIG } from '@/config/constants'
 
-function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSidebar }) {
+const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSidebar }, ref) {
+  const messageInputRef = useRef(null)
+
+  // Expose handleFileDrop to parent
+  useImperativeHandle(ref, () => ({
+    handleFileDrop: (files) => {
+      if (messageInputRef.current) {
+        messageInputRef.current.handleFileDrop(files)
+      }
+    }
+  }), [])
   const {
     provider,
     setProvider,
@@ -203,7 +213,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
     }
 
     if (workingDir.type === 'isolated') {
-      window.electronAPI.window.setTitle('ChatAnyLLM - Safe Workspace')
+      window.electronAPI.window.setTitle('ChatAnyLLM - Default Workspace')
     } else {
       // Extract folder name from path for linked workspaces
       const parts = workingDir.path.split(/[/\\]/)
@@ -499,6 +509,7 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       />
 
       <MessageInputArea
+        ref={messageInputRef}
         onSendMessage={handleSendMessage}
         onStopGeneration={handleStopGeneration}
         isCurrentStreaming={isCurrentStreaming}
@@ -514,6 +525,6 @@ function ChatWindow({ conversationId, onOpenSettings, sidebarOpen, onToggleSideb
       />
     </div>
   )
-}
+})
 
 export default ChatWindow

@@ -21,10 +21,10 @@ export function EmptyStatePrompt({ conversationId }) {
   }
 
   const getWorkspaceName = () => {
-    if (!workingDir) return 'Safe Workspace'
+    if (!workingDir) return 'Default Workspace'
 
     if (workingDir.type === 'isolated') {
-      return 'Safe Workspace'
+      return 'Default Workspace'
     }
 
     // For linked folders, extract folder name

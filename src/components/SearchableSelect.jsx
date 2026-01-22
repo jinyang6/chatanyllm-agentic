@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Check as CheckIcon, ChevronsUpDown as ChevronsUpDownIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   Command,
   CommandEmpty,
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils'
 
 const ITEMS_PER_PAGE = 50
 const LARGE_LIST_THRESHOLD = 100
+const RECOMMENDED_MODEL = 'google/gemini-3-flash-preview'
 
 // Helper to render capability tag
 const CapabilityTag = ({ label }) => {
@@ -150,7 +152,19 @@ export function SearchableSelect({
                             )}
                           />
                           <div className="flex-1">
-                            <div className="font-medium">{option.name}</div>
+                            <div className="font-medium flex items-center gap-2">
+                              {option.name}
+                              {option.id === RECOMMENDED_MODEL && (
+                                <Badge variant="default">
+                                  Recommended
+                                </Badge>
+                              )}
+                              {option.badge && (
+                                <Badge variant={option.badgeVariant || "default"}>
+                                  {option.badge}
+                                </Badge>
+                              )}
+                            </div>
                             {showDescription && option.description && (
                               <div className="text-xs text-muted-foreground line-clamp-2">
                                 {option.description}

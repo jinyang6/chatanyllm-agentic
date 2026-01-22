@@ -385,7 +385,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                                     }
                                   }}
                                 >
-                                  <div className="text-sm opacity-70 whitespace-pre-wrap break-words font-mono pr-3">
+                                  <div className="text-sm opacity-70 whitespace-pre-wrap break-words font-mono pr-3" data-message-content>
                                     {message.reasoning || (opencodeActivity && opencodeActivity.processingText) || ''}
                                   </div>
                                 </ScrollArea>
@@ -465,7 +465,7 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
                       {/* Response content */}
                       <div className="relative">
                       <div className={`relative ${collapsedMessages.has(message.id) ? 'max-h-[120px] overflow-hidden' : ''}`}>
-                        <div className="prose prose-lg max-w-none break-words prose-ul:list-disc prose-ol:list-decimal prose-li:marker:text-gray-900 dark:prose-li:marker:text-gray-100 prose-p:text-gray-900 dark:prose-p:text-gray-100">
+                        <div className="prose prose-lg max-w-none break-words prose-ul:list-disc prose-ol:list-decimal prose-li:marker:text-gray-900 dark:prose-li:marker:text-gray-100 prose-p:text-gray-900 dark:prose-p:text-gray-100" data-message-content>
                           <MemoizedMarkdownContent
                             content={cleanContent}
                             currentConversationId={currentConversationId}

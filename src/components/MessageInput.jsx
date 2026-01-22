@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { ArrowUp as ArrowUpIcon, CircleStop as StopIcon, Paperclip as PaperclipIcon, X as XIcon, FileText as FileIcon, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -17,11 +17,56 @@ import {
 } from '@/components/ui/context-menu'
 import { CopyIcon, ClipboardPasteIcon, ScissorsIcon, Type as SelectAllIcon } from 'lucide-react'
 
-function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, disabled = false, disabledTooltip = null }) {
+const MessageInput = forwardRef(function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, disabled = false, disabledTooltip = null }, ref) {
   const [message, setMessage] = useState('')
   const [attachments, setAttachments] = useState([])
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
+
+  // Process files (shared logic for file input and drag-drop)
+  const processFiles = async (files) => {
+    const newAttachments = []
+
+    for (const file of files) {
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`File ${file.name} is too large. Maximum size is 10MB.`)
+        continue
+      }
+
+      // Read file as base64
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      const isImage = file.type.startsWith('image/')
+
+      newAttachments.push({
+        id: Date.now() + Math.random(),
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        data: base64,
+        isImage
+      })
+    }
+
+    setAttachments(prev => [...prev, ...newAttachments])
+  }
+
+  // Expose handleFileDrop method to parent via ref
+  useImperativeHandle(ref, () => ({
+    handleFileDrop: async (files) => {
+      if (disabled || isStreaming) {
+        toast.error('Cannot attach files while streaming or disabled')
+        return
+      }
+      await processFiles(files)
+    }
+  }), [disabled, isStreaming])
 
   // Auto-resize textarea as content grows
   useEffect(() => {
@@ -125,36 +170,7 @@ function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, di
     const files = Array.from(e.target.files)
     if (files.length === 0) return
 
-    const newAttachments = []
-
-    for (const file of files) {
-      // Check file size (max 10MB)
-      if (file.size > 10 * 1024 * 1024) {
-        alert(`File ${file.name} is too large. Maximum size is 10MB.`)
-        continue
-      }
-
-      // Read file as base64
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result)
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-
-      const isImage = file.type.startsWith('image/')
-
-      newAttachments.push({
-        id: Date.now() + Math.random(),
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        data: base64,
-        isImage
-      })
-    }
-
-    setAttachments(prev => [...prev, ...newAttachments])
+    await processFiles(files)
 
     // Reset file input
     if (fileInputRef.current) {
@@ -460,6 +476,6 @@ function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, di
       </div>
     </div>
   )
-}
+})
 
 export default MessageInput

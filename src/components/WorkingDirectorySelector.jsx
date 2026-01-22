@@ -53,7 +53,7 @@ export function WorkingDirectorySelector({ conversationId, className = '' }) {
     const folderName = parts[parts.length - 1] || parts[parts.length - 2] || 'workspace'
 
     if (workingDir.type === 'isolated') {
-      return `${folderName} (Safe Workspace)`
+      return `${folderName} (Default Workspace)`
     }
 
     // For linked folders, just show the folder name
@@ -89,7 +89,7 @@ export function WorkingDirectorySelector({ conversationId, className = '' }) {
           variant="ghost"
           size="sm"
           onClick={handleUnlink}
-          title="Unlink - return to safe workspace"
+          title="Unlink - return to default workspace"
         >
           <X className="w-3 h-3" />
         </Button>

@@ -81,7 +81,7 @@ export const WORKSPACE_CONFIG = {
   TYPE_LINKED: 'linked',
 
   // Display names
-  SAFE_WORKSPACE_NAME: 'Safe Workspace',
+  SAFE_WORKSPACE_NAME: 'Default Workspace',
   DEFAULT_PROJECT_NAME: 'Project'
 }
 

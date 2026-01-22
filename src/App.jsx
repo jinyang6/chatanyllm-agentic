@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
 import { ProviderProvider, useProvider } from './contexts/ProviderContext'
 import { ConversationProvider, useConversation } from './contexts/ConversationContext'
@@ -7,6 +7,7 @@ import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import ChatWindow from './components/ChatWindow'
 import SettingsModal from './components/SettingsModal'
+import { DragDropWrapper } from './components/DragDropWrapper'
 import { isElectron, signalAppReady } from './lib/electron'
 
 // Inner component that signals app ready when both contexts are loaded
@@ -28,6 +29,13 @@ function App() {
   const [currentConversation, setCurrentConversation] = useState('conv-1')
   const [showSettings, setShowSettings] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const messageInputRef = useRef(null)
+
+  const handleFileDrop = (files) => {
+    if (messageInputRef.current) {
+      messageInputRef.current.handleFileDrop(files)
+    }
+  }
 
   // Log startup mode
   useEffect(() => {
@@ -89,12 +97,15 @@ function App() {
               />
 
               {/* Main Chat Area */}
-              <ChatWindow
-                conversationId={currentConversation}
-                onOpenSettings={() => setShowSettings(true)}
-                sidebarOpen={sidebarOpen}
-                onToggleSidebar={() => setSidebarOpen(prev => !prev)}
-              />
+              <DragDropWrapper onFileDrop={handleFileDrop}>
+                <ChatWindow
+                  ref={messageInputRef}
+                  conversationId={currentConversation}
+                  onOpenSettings={() => setShowSettings(true)}
+                  sidebarOpen={sidebarOpen}
+                  onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+                />
+              </DragDropWrapper>
 
               {/* Settings Modal */}
               {showSettings && (
