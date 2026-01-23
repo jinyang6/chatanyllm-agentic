@@ -312,23 +312,23 @@ export const conversations = {
   },
 
   async delete(id) {
-    console.log('Deleting conversation:', id)
+    // console.log('Deleting conversation:', id)
 
     if (!isElectron()) {
-      console.log('Using localStorage mode for deletion')
+      // console.log('Using localStorage mode for deletion')
       const key = `conversation:${id}`
-      console.log('Removing localStorage key:', key)
+      // console.log('Removing localStorage key:', key)
       localStorage.removeItem(key)
-      console.log('localStorage deletion complete')
+      // console.log('localStorage deletion complete')
       return { success: true }
     }
 
-    console.log('Using Electron file system for deletion')
+    // console.log('Using Electron file system for deletion')
     const dataDir = await this.getDataDir()
     const filePath = `${dataDir}/${id}.json`
-    console.log('Deleting file:', filePath)
+    // console.log('Deleting file:', filePath)
     const result = await fileSystem.deleteFile(filePath)
-    console.log('File deletion result:', result)
+    // console.log('File deletion result:', result)
     return result
   }
 }

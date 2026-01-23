@@ -215,13 +215,13 @@ export function ConversationProvider({ children }) {
 
     // Save migrated conversations
     if (needsMigration) {
-      console.log('🔄 Migrating conversations to include working directory...')
+      // console.log('🔄 Migrating conversations to include working directory...')
       for (const conversation of migrated) {
         if (!conversations.find(c => c.id === conversation.id)?.workingDirectory) {
           await conversationStorage.save(conversation)
         }
       }
-      console.log('✓ Migration complete')
+      // console.log('✓ Migration complete')
     }
 
     return migrated
@@ -588,29 +588,29 @@ export function ConversationProvider({ children }) {
 
   // Delete a conversation
   const deleteConversation = async (conversationId) => {
-    console.log('ConversationContext: Starting deletion for:', conversationId)
+    // console.log('ConversationContext: Starting deletion for:', conversationId)
 
     // Get conversation before deletion to check working directory
     const conversation = conversations.find(c => c.id === conversationId)
 
     const result = await conversationStorage.delete(conversationId)
-    console.log('ConversationContext: Storage deletion result:', result)
+    // console.log('ConversationContext: Storage deletion result:', result)
 
     if (!result.success) {
       console.error('Failed to delete conversation file:', result.error)
       // Still remove from state even if file deletion fails
     } else {
-      console.log('ConversationContext: File deletion successful')
+      // console.log('ConversationContext: File deletion successful')
     }
 
     // Delete isolated workspace directory if this conversation used one
     if (conversation?.workingDirectory?.type === 'isolated') {
       try {
-        console.log('ConversationContext: Deleting isolated workspace:', conversation.workingDirectory.path)
+        // console.log('ConversationContext: Deleting isolated workspace:', conversation.workingDirectory.path)
         if (window.electronAPI?.workspace) {
           const deleteResult = await window.electronAPI.workspace.deleteDirectory(conversation.workingDirectory.path)
           if (deleteResult.success) {
-            console.log('ConversationContext: Workspace directory deleted successfully')
+            // console.log('ConversationContext: Workspace directory deleted successfully')
           } else {
             console.error('ConversationContext: Failed to delete workspace directory:', deleteResult.error)
           }
@@ -620,14 +620,14 @@ export function ConversationProvider({ children }) {
         // Continue with deletion even if workspace cleanup fails
       }
     } else if (conversation?.workingDirectory?.type === 'linked') {
-      console.log('ConversationContext: Linked workspace - not deleting user project folder')
+      // console.log('ConversationContext: Linked workspace - not deleting user project folder')
     }
 
     // Cleanup OpenCode session if this conversation used OpenCode provider
     if (conversation && conversation.provider === 'opencode') {
       try {
         await cleanupSession(conversationId)
-        console.log('ConversationContext: OpenCode session cleaned up')
+        // console.log('ConversationContext: OpenCode session cleaned up')
       } catch (error) {
         console.error('ConversationContext: Failed to cleanup OpenCode session:', error)
         // Continue with deletion even if OpenCode cleanup fails
@@ -702,7 +702,7 @@ export function ConversationProvider({ children }) {
   }
 
   const setOpencodeStatus = (messageId, status) => {
-    console.log('🔵 setOpencodeStatus called:', messageId, status)
+    // console.log('🔵 setOpencodeStatus called:', messageId, status)
     setOpencodeActivity(prev => {
       const next = new Map(prev)
       const activity = next.get(messageId) || { isActive: false, currentAction: null, events: [] }
@@ -712,7 +712,7 @@ export function ConversationProvider({ children }) {
         ...status
       }
 
-      console.log('🔵 Updated activity:', updated)
+      // console.log('🔵 Updated activity:', updated)
       next.set(messageId, updated)
 
       return next
@@ -748,7 +748,7 @@ export function ConversationProvider({ children }) {
   }
 
   const setOpencodeProcessingText = (messageId, text) => {
-    console.log('🔵 setOpencodeProcessingText called:', messageId, text.substring(0, 100))
+    // console.log('🔵 setOpencodeProcessingText called:', messageId, text.substring(0, 100))
 
     // Update in-memory activity
     setOpencodeActivity(prev => {
@@ -829,7 +829,7 @@ export function ConversationProvider({ children }) {
 
   // Delete a specific message (only that single message)
   const deleteMessage = async (messageId) => {
-    console.log('deleteMessage: Deleting message:', messageId)
+    // console.log('deleteMessage: Deleting message:', messageId)
 
     // Get the current conversation to update
     const currentConversation = conversations.find(c => c.id === currentConversationId)
@@ -840,13 +840,13 @@ export function ConversationProvider({ children }) {
 
     const messageIndex = currentConversation.messages.findIndex(m => m.id === messageId)
     if (messageIndex < 0) {
-      console.log('deleteMessage: Message not found in current conversation')
+      // console.log('deleteMessage: Message not found in current conversation')
       return
     }
 
     // Remove only this specific message
     const newMessages = currentConversation.messages.filter(m => m.id !== messageId)
-    console.log('deleteMessage: New messages count:', newMessages.length)
+    // console.log('deleteMessage: New messages count:', newMessages.length)
 
     const updatedConversation = {
       ...currentConversation,
@@ -861,10 +861,10 @@ export function ConversationProvider({ children }) {
     )
 
     // Save to storage
-    console.log('deleteMessage: Saving updated conversation to storage')
+    // console.log('deleteMessage: Saving updated conversation to storage')
     try {
       const saveResult = await conversationStorage.save(updatedConversation)
-      console.log('deleteMessage: Save result:', saveResult)
+      // console.log('deleteMessage: Save result:', saveResult)
     } catch (error) {
       console.error('Failed to save conversation after deleting message:', error)
       // Message is already removed from state, so continue
@@ -904,7 +904,7 @@ export function ConversationProvider({ children }) {
       if (window.electronAPI?.opencode) {
         const status = await window.electronAPI.opencode.getSessionStatus(conversationId)
         if (status.exists) {
-          console.log('🔵 Recreating OpenCode session with new directory')
+          // console.log('🔵 Recreating OpenCode session with new directory')
           await window.electronAPI.opencode.deleteSession(conversationId)
         }
       }

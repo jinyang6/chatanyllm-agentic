@@ -98,11 +98,11 @@ export function useWorkspaceManagement(conversationId, summarizeFn = null) {
     }
 
     try {
-      console.log('🔵 Manually triggering client-side compaction...')
+      // console.log('🔵 Manually triggering client-side compaction...')
 
       // Check if there are enough messages to compact
       if (messages.length < COMPACTION_CONFIG.MIN_MESSAGES_FOR_COMPACTION) {
-        console.log(`❌ Need at least ${COMPACTION_CONFIG.MIN_MESSAGES_FOR_COMPACTION} messages to compact`)
+        // console.log(`❌ Need at least ${COMPACTION_CONFIG.MIN_MESSAGES_FOR_COMPACTION} messages to compact`)
         return
       }
 
@@ -114,7 +114,7 @@ export function useWorkspaceManagement(conversationId, summarizeFn = null) {
       })
 
       if (result.compactedMessages) {
-        console.log('🗜️ Manual compaction completed:', result.stats)
+        // console.log('🗜️ Manual compaction completed:', result.stats)
         await replaceMessages(result.compactedMessages)
       }
 

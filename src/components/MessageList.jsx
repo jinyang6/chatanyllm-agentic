@@ -38,12 +38,12 @@ function MessageList({ messages, onRetry, onEditUserMessage, onDeleteMessage, is
   // Handle permission response
   const handlePermissionResponse = async (requestID, reply) => {
     try {
-      console.log('🔵 Responding to permission:', requestID, reply)
+      // console.log('🔵 Responding to permission:', requestID, reply)
       const result = await window.electronAPI.opencode.respondPermission(requestID, reply)
       if (!result.success) {
         console.error('Failed to respond to permission:', result.error)
       } else {
-        console.log('✓ Permission response sent successfully')
+        // console.log('✓ Permission response sent successfully')
       }
     } catch (error) {
       console.error('Error responding to permission:', error)

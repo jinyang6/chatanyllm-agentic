@@ -67,7 +67,7 @@ const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettin
   // Summarize messages using LLM - defined early so it can be passed to hooks
   const summarizeWithLLM = useCallback(async (summaryPrompt) => {
     return new Promise((resolve) => {
-      console.log('🔵 Calling LLM to summarize conversation...')
+      // console.log('🔵 Calling LLM to summarize conversation...')
       let summary = ''
 
       // Get current provider API key
@@ -88,7 +88,7 @@ const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettin
             summary = fullContent
           },
           onComplete: (fullContent) => {
-            console.log('✓ Summary generated:', fullContent?.substring(0, 100) + '...')
+            // console.log('✓ Summary generated:', fullContent?.substring(0, 100) + '...')
             resolve(fullContent || summary || 'Earlier conversation (summary unavailable)')
           },
           onError: (err) => {
@@ -115,7 +115,7 @@ const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettin
       })
 
       if (result.compacted) {
-        console.log('🗜️ Auto-compaction completed:', result.stats)
+        // console.log('🗜️ Auto-compaction completed:', result.stats)
         // Replace messages with compacted version
         await replaceMessages(result.messages)
       }
@@ -155,7 +155,7 @@ const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettin
       // Only sync if this is the current conversation
       if (conversationId !== currentConversationId) return
 
-      console.log('🗜️ Syncing conversation with OpenCode compacted state')
+      // console.log('🗜️ Syncing conversation with OpenCode compacted state')
 
       try {
         // Convert OpenCode messages to ChatAnyLLM format
@@ -192,7 +192,7 @@ const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettin
 
         // Replace conversation messages with OpenCode's state
         await replaceMessages(syncedMessages)
-        console.log('✓ Conversation synced with OpenCode:', syncedMessages.length, 'messages')
+        // console.log('✓ Conversation synced with OpenCode:', syncedMessages.length, 'messages')
       } catch (error) {
         console.error('Failed to sync compacted messages:', error)
       }

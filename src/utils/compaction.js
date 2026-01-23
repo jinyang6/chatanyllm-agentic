@@ -148,11 +148,11 @@ export async function autoCompact(messages, summarizeFn, options = {}) {
     return { compacted: false, messages }
   }
 
-  console.log(`🗜️ Auto-compaction triggered (${check.reason}: ${check.value})`)
+  // console.log(`🗜️ Auto-compaction triggered (${check.reason}: ${check.value})`)
 
   const result = await compactConversation(messages, summarizeFn, options)
 
-  console.log(`✓ Compacted ${result.stats.compacted} messages → ${result.stats.totalAfter} total`)
+  // console.log(`✓ Compacted ${result.stats.compacted} messages → ${result.stats.totalAfter} total`)
 
   return {
     compacted: true,

@@ -179,7 +179,7 @@ export async function sendStreamingMessage({
             // Handle OpenRouter image generation response format
             // Images are returned in delta.images array
             if (delta?.images && Array.isArray(delta.images)) {
-              // Removed console.log for performance during streaming
+              // Removed // console.log for performance during streaming
               for (const image of delta.images) {
                 const imageUrl = image.image_url?.url || image.url
                 if (imageUrl) {
@@ -194,7 +194,7 @@ export async function sendStreamingMessage({
             // Also check for images in the main message (some models return here)
             const message = parsed.choices?.[0]?.message
             if (message?.images && Array.isArray(message.images)) {
-              // Removed console.log for performance during streaming
+              // Removed // console.log for performance during streaming
               for (const image of message.images) {
                 const imageUrl = image.image_url?.url || image.url
                 if (imageUrl) {

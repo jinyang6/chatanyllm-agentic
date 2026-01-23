@@ -87,10 +87,10 @@ function Sidebar({ isOpen, currentConversation, onSelectConversation, onOpenSett
 
   const handleConfirmDelete = async () => {
     if (deletingConv) {
-      console.log('Sidebar: Initiating deletion for conversation:', deletingConv.id)
+      // console.log('Sidebar: Initiating deletion for conversation:', deletingConv.id)
       try {
         await deleteConversation(deletingConv.id)
-        console.log('Sidebar: Deletion completed successfully')
+        // console.log('Sidebar: Deletion completed successfully')
       } catch (error) {
         console.error('Sidebar: Deletion failed:', error)
       }

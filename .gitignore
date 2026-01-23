@@ -39,3 +39,6 @@ pnpm-debug.log*
 # User data (encryption keys, conversations)
 userdata/
 store.json
+
+# Opencode.exe folder
+opencode-user/

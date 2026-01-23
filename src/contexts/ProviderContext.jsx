@@ -171,15 +171,15 @@ export function ProviderProvider({ children }) {
         }, {})
 
         const keyProviders = Object.keys(cleanedKeys).filter(key => cleanedKeys[key])
-        console.log('💾 Saving API keys for providers:', keyProviders)
-        console.log('🧹 Cleaned keys (total providers):', validProviderIds.length)
+        // console.log('💾 Saving API keys for providers:', keyProviders)
+        // console.log('🧹 Cleaned keys (total providers):', validProviderIds.length)
 
         if (useElectronStorage) {
           await store.set('apiKeys', cleanedKeys)
-          console.log('✅ API keys encrypted and saved to store.json')
+          // console.log('✅ API keys encrypted and saved to store.json')
         } else {
           localStorage.setItem('apiKeys', JSON.stringify(cleanedKeys))
-          console.log('✅ API keys saved to localStorage')
+          // console.log('✅ API keys saved to localStorage')
         }
       } catch (error) {
         console.error('❌ Failed to save API keys:', error)
@@ -200,10 +200,10 @@ export function ProviderProvider({ children }) {
       try {
         if (useElectronStorage) {
           await store.set('customProviders', customProviders)
-          console.log('✅ Custom providers saved to store.json')
+          // console.log('✅ Custom providers saved to store.json')
         } else {
           localStorage.setItem('customProviders', JSON.stringify(customProviders))
-          console.log('✅ Custom providers saved to localStorage')
+          // console.log('✅ Custom providers saved to localStorage')
         }
       } catch (error) {
         console.error('❌ Failed to save custom providers:', error)

@@ -35,11 +35,11 @@ async function fetchOpenRouterModels(apiKey) {
 
     // Log first few models to see API structure (only in development)
     if (data.data.length > 0 && process.env.NODE_ENV === 'development') {
-      console.log('📋 OpenRouter API - Sample model data:', {
-        sampleModel: data.data[0],
-        architecture: data.data[0].architecture,
-        supportedParameters: data.data[0].supported_parameters
-      })
+      // console.log('📋 OpenRouter API - Sample model data:', {
+      //   sampleModel: data.data[0],
+      //   architecture: data.data[0].architecture,
+      //   supportedParameters: data.data[0].supported_parameters
+      // })
     }
 
     return data.data.map(model => {

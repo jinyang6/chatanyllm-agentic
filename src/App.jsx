@@ -40,13 +40,13 @@ function App() {
   // Log startup mode
   useEffect(() => {
     const electronMode = isElectron()
-    console.log('=== ChatAnyLLM Startup ===')
-    console.log('Running in:', electronMode ? 'ELECTRON MODE (file system)' : 'BROWSER MODE (localStorage)')
+    // console.log('=== ChatAnyLLM Startup ===')
+    // console.log('Running in:', electronMode ? 'ELECTRON MODE (file system)' : 'BROWSER MODE (localStorage)')
     if (!electronMode) {
-      console.log('⚠️ Browser mode: Conversations are stored in localStorage, not JSON files on disk')
-      console.log('To use file storage, run: npm start (which launches Electron)')
+      // console.log('⚠️ Browser mode: Conversations are stored in localStorage, not JSON files on disk')
+      // console.log('To use file storage, run: npm start (which launches Electron)')
     }
-    console.log('========================')
+    // console.log('========================')
   }, [])
 
   // Load sidebar state from localStorage on mount
