@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { SearchableSelect } from '../SearchableSelect'
 import { ERROR_TYPES } from '@/hooks/useModelFetcher'
 import { isElectron } from '@/lib/electron'
+import { InstallOpenCodeDialog } from './InstallOpenCodeDialog'
 
 export function PreferencesTab({
   provider,
@@ -20,11 +21,14 @@ export function PreferencesTab({
   fetchStatus,
   getModelsForProvider
 }) {
-  const [opencodeVersion, setOpencodeVersion] = useState(null)
+  const [bundledVersion, setBundledVersion] = useState(null)
+  const [installedVersion, setInstalledVersion] = useState(null)
+  const [currentVersion, setCurrentVersion] = useState(null)
   const [availableVersions, setAvailableVersions] = useState([])
   const [latestVersion, setLatestVersion] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [updating, setUpdating] = useState(false)
+  const [showInstallDialog, setShowInstallDialog] = useState(false)
+  const [targetInstallVersion, setTargetInstallVersion] = useState(null)
 
   // Load OpenCode versions on mount
   useEffect(() => {
@@ -36,11 +40,20 @@ export function PreferencesTab({
   const loadVersions = async () => {
     setLoading(true)
     try {
-      const result = await window.electronAPI.opencode.getAvailableVersions()
-      if (result.success) {
-        setOpencodeVersion(result.currentVersion)
-        setLatestVersion(result.latestVersion)
-        setAvailableVersions(result.versions)
+      // Get available versions from GitHub
+      const availResult = await window.electronAPI.opencode.getAvailableVersions()
+      if (availResult.success) {
+        setLatestVersion(availResult.latestVersion)
+        setAvailableVersions(availResult.versions)
+      }
+
+      // Get installed version info
+      const installedResult = await window.electronAPI.opencode.getInstalledVersion()
+      if (installedResult.success) {
+        setBundledVersion(installedResult.bundledVersion)
+        setInstalledVersion(installedResult.installedVersion)
+        // Current version is installed if exists, otherwise bundled
+        setCurrentVersion(installedResult.installedVersion || installedResult.bundledVersion)
       }
     } catch (err) {
       console.error('Failed to load OpenCode versions:', err)
@@ -49,21 +62,26 @@ export function PreferencesTab({
     }
   }
 
-  const handleVersionChange = async (selectedVersion) => {
-    if (selectedVersion === opencodeVersion) return // Already on this version
-
-    setUpdating(true)
-    try {
-      const result = await window.electronAPI.opencode.update(selectedVersion)
-      if (result.success) {
-        setOpencodeVersion(result.version)
-        await loadVersions() // Refresh versions
-      }
-    } catch (err) {
-      console.error('Update failed:', err)
-    } finally {
-      setUpdating(false)
+  const handleVersionSelect = (selectedVersion) => {
+    // Don't allow clicking built-in version (already installed)
+    if (selectedVersion === bundledVersion) {
+      return
     }
+
+    // Check if this version is already installed
+    if (selectedVersion === installedVersion) {
+      setCurrentVersion(selectedVersion)
+      return
+    }
+
+    // Show install dialog for new version
+    setTargetInstallVersion(selectedVersion)
+    setShowInstallDialog(true)
+  }
+
+  const handleInstallComplete = async (version) => {
+    // Refresh version info
+    await loadVersions()
   }
   const handleProviderChange = (value) => {
     setProvider(value)
@@ -128,53 +146,46 @@ export function PreferencesTab({
           />
         </div>
 
-        {/* Default Agent - OpenCode with Version Selector */}
+        {/* Default Agent */}
         {isElectron() && (
           <div className="space-y-2">
-            <Label className="text-sm font-medium">
-              Default Agent
-            </Label>
+            <Label className="text-sm font-medium">Default Agent</Label>
             <SearchableSelect
-              value={opencodeVersion || ''}
-              onValueChange={handleVersionChange}
-              options={availableVersions.map(version => ({
-                id: version,
-                name: `OpenCode v${version}`,
-                description: version === latestVersion
-                  ? 'Latest'
-                  : version === opencodeVersion
-                    ? 'Current'
-                    : ''
-              }))}
-              placeholder={loading ? 'Loading versions...' : updating ? 'Installing...' : 'Select OpenCode version...'}
+              value={currentVersion || ''}
+              onValueChange={handleVersionSelect}
+              options={[
+                // Bundled version always first
+                bundledVersion && {
+                  id: bundledVersion,
+                  name: `OpenCode v${bundledVersion}`,
+                  description: 'Built-in',
+                  badge: 'Built-in',
+                  badgeVariant: 'secondary'
+                },
+                // Available versions
+                ...availableVersions.map(version => ({
+                  id: version,
+                  name: `OpenCode v${version}`,
+                  description: version === installedVersion ? 'Installed' : 'Click to install',
+                  badge: version === latestVersion ? 'Latest' : null
+                }))
+              ].filter(Boolean)}
+              placeholder={loading ? 'Loading...' : 'Select version...'}
               searchPlaceholder="Search versions..."
               showDescription={true}
               className="w-full justify-start"
-              disabled={loading || updating}
-              renderOption={(option) => {
-                const version = option.id
-                return (
-                  <div className="flex items-center justify-between w-full">
-                    <span>OpenCode v{version}</span>
-                    <div className="flex items-center gap-2">
-                      {version === latestVersion && (
-                        <Badge variant="secondary" className="text-xs">Latest</Badge>
-                      )}
-                      {version === opencodeVersion && (
-                        <Check className="h-4 w-4 text-green-500" />
-                      )}
-                    </div>
-                  </div>
-                )
-              }}
+              disabled={loading}
             />
-            {updating && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Installing... Restart required after completion.
-              </p>
-            )}
           </div>
         )}
+
+        {/* Install Dialog */}
+        <InstallOpenCodeDialog
+          open={showInstallDialog}
+          onOpenChange={setShowInstallDialog}
+          version={targetInstallVersion}
+          onInstallComplete={handleInstallComplete}
+        />
 
         <Alert>
           <InfoIcon className="h-5 w-5" />

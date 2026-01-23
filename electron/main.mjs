@@ -41,7 +41,7 @@ try {
     process.exit(1)
   }
 
-  console.log('✓ Electron main process initialized successfully')
+  // console.log'✓ Electron main process initialized successfully')
 } catch (error) {
   console.error('ERROR: Failed to load Electron:', error.message)
   process.exit(1)
@@ -100,19 +100,19 @@ function createWindow() {
     windowConfig.hasShadow = true  // Native shadow for better integration
 
     if (isWindows11()) {
-      console.log('✓ Windows 11 detected - using optimized custom titlebar')
+      // console.log'✓ Windows 11 detected - using optimized custom titlebar')
     } else {
-      console.log('✓ Windows 10 detected - using custom titlebar')
+      // console.log('✓ Windows 10 detected - using custom titlebar')
     }
   } else if (process.platform === 'darwin') {
     // macOS: Native traffic lights with hidden titlebar
     windowConfig.titleBarStyle = 'hiddenInset'
     windowConfig.trafficLightPosition = { x: 10, y: 10 }
-    console.log('✓ macOS detected - using native traffic lights')
+    // console.log('✓ macOS detected - using native traffic lights')
   } else {
     // Linux: Custom titlebar
     windowConfig.frame = false
-    console.log('✓ Linux detected - using custom titlebar')
+    // console.log('✓ Linux detected - using custom titlebar')
   }
 
   mainWindow = new BrowserWindow(windowConfig)
@@ -131,7 +131,7 @@ function createWindow() {
   showWindowTimeout = setTimeout(() => {
     if (mainWindow && !mainWindow.isVisible()) {
       mainWindow.show()
-      console.log('Window shown after timeout fallback')
+      // console.log('Window shown after timeout fallback')
     }
   }, 3000)
 
@@ -239,7 +239,7 @@ async function deleteWorkspaceDirectory(workspacePath) {
 
     // Delete directory recursively
     await fs.rm(workspacePath, { recursive: true, force: true })
-    console.log('✓ Deleted workspace directory:', workspacePath)
+    // console.log('✓ Deleted workspace directory:', workspacePath)
 
     return true
   } catch (error) {
@@ -259,7 +259,7 @@ async function findAvailablePort(preferredPort = 4096) {
     server.listen(preferredPort, () => {
       const port = server.address().port
       server.close(() => {
-        console.log(`✓ Port ${port} is available`)
+        // console.log(`✓ Port ${port} is available`)
         resolve(port)
       })
     })
@@ -267,12 +267,12 @@ async function findAvailablePort(preferredPort = 4096) {
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         // Port is in use, let OS assign a random available port
-        console.log(`⚠ Port ${preferredPort} is in use, finding alternative...`)
+        // console.log(`⚠ Port ${preferredPort} is in use, finding alternative...`)
         const fallbackServer = net.default.createServer()
         fallbackServer.listen(0, () => { // 0 = OS assigns available port
           const port = fallbackServer.address().port
           fallbackServer.close(() => {
-            console.log(`✓ Found available port: ${port}`)
+            // console.log(`✓ Found available port: ${port}`)
             resolve(port)
           })
         })
@@ -292,14 +292,34 @@ async function startOpencodeServer(options = {}) {
 
   // Find available port dynamically
   const port = await findAvailablePort(preferredPort)
-  console.log(`🔵 Using port: ${port}`)
+  // console.log(`🔵 Using port: ${port}`)
 
-  // Use the node wrapper script directly on Windows
-  const opencodeBinary = process.platform === 'win32'
-    ? path.join(process.cwd(), 'node_modules', 'opencode-ai', 'bin', 'opencode.cmd')
-    : path.join(process.cwd(), 'node_modules', 'opencode-ai', 'bin', 'opencode')
+  // Resolve OpenCode binary path (works in both dev and production)
+  const isDev = !app.isPackaged
+  let opencodeBinary
 
-  console.log('🔵 Using OpenCode binary:', opencodeBinary)
+  // Determine app directory
+  const appDir = isDev ? process.cwd() : path.dirname(app.getPath('exe'))
+  const userBinary = path.join(appDir, 'opencode-user', 'opencode.exe')
+
+  try {
+    // Check if user-installed version exists (same logic for dev and prod)
+    await fs.access(userBinary)
+    opencodeBinary = userBinary
+    // console.log('🔵 Using user-installed OpenCode')
+  } catch (error) {
+    // Fallback to bundled version
+    if (isDev) {
+      opencodeBinary = path.join(process.cwd(), 'node_modules', 'opencode-windows-x64', 'bin', 'opencode.exe')
+    } else {
+      const resourcesPath = process.resourcesPath
+      opencodeBinary = path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', 'opencode-windows-x64', 'bin', 'opencode.exe')
+    }
+    // console.log('🔵 Using bundled OpenCode')
+  }
+
+  // console.log('🔵 Using OpenCode binary:', opencodeBinary)
+  // console.log('🔵 Development mode:', isDev)
 
   const args = ['serve', `--hostname=${hostname}`, `--port=${port}`]
 
@@ -321,7 +341,7 @@ async function startOpencodeServer(options = {}) {
     let output = ''
     proc.stdout?.on('data', (chunk) => {
       output += chunk.toString()
-      console.log('OpenCode stdout:', chunk.toString())
+      // console.log('OpenCode stdout:', chunk.toString())
       const lines = output.split('\n')
       for (const line of lines) {
         if (line.includes('opencode server listening')) {
@@ -372,7 +392,7 @@ async function killPreviousOpencodeProcess() {
       const oldPid = parseInt(pidContent.trim())
 
       if (!isNaN(oldPid)) {
-        console.log(`🔵 Found previous OpenCode PID: ${oldPid}`)
+        // console.log(`🔵 Found previous OpenCode PID: ${oldPid}`)
 
         // Try to kill the process
         if (process.platform === 'win32') {
@@ -383,19 +403,19 @@ async function killPreviousOpencodeProcess() {
           try {
             // Use cmd.exe to ensure proper command interpretation
             await execAsync(`cmd /c taskkill /F /PID ${oldPid}`)
-            console.log(`✓ Killed previous OpenCode process (PID: ${oldPid})`)
+            // console.log(`✓ Killed previous OpenCode process (PID: ${oldPid})`)
             killedViaPid = true
           } catch (error) {
-            console.log(`ℹ Previous process (PID: ${oldPid}) not found or already terminated`)
+            // console.log(`ℹ Previous process (PID: ${oldPid}) not found or already terminated`)
           }
         } else {
           // Unix
           try {
             process.kill(oldPid, 'SIGTERM')
-            console.log(`✓ Killed previous OpenCode process (PID: ${oldPid})`)
+            // console.log(`✓ Killed previous OpenCode process (PID: ${oldPid})`)
             killedViaPid = true
           } catch (error) {
-            console.log(`ℹ Previous process (PID: ${oldPid}) not found or already terminated`)
+            // console.log(`ℹ Previous process (PID: ${oldPid}) not found or already terminated`)
           }
         }
 
@@ -404,7 +424,7 @@ async function killPreviousOpencodeProcess() {
       }
     } catch (error) {
       // No PID file or couldn't read it
-      console.log('ℹ No PID file found')
+      // console.log('ℹ No PID file found')
     }
 
     // Method 2: Fallback - check port 4096 for zombie processes (in case PID file was lost)
@@ -414,7 +434,7 @@ async function killPreviousOpencodeProcess() {
       const execAsync = promisify(exec)
 
       try {
-        console.log('🔵 Checking port 4096 for zombie OpenCode processes...')
+        // console.log('🔵 Checking port 4096 for zombie OpenCode processes...')
         const netstatResult = await execAsync(`netstat -ano | findstr ":4096"`)
         const lines = netstatResult.stdout.split('\n')
 
@@ -422,23 +442,23 @@ async function killPreviousOpencodeProcess() {
           if (line.includes('LISTENING')) {
             const parts = line.trim().split(/\s+/)
             const pid = parts[parts.length - 1]
-            console.log(`🔵 Found process ${pid} on port 4096`)
+            // console.log(`🔵 Found process ${pid} on port 4096`)
 
             if (pid && pid !== '0' && !isNaN(pid)) {
               try {
                 // Use cmd.exe to ensure proper command interpretation
                 await execAsync(`cmd /c taskkill /F /PID ${pid}`)
-                console.log(`✓ Killed zombie process ${pid} on port 4096`)
+                // console.log(`✓ Killed zombie process ${pid} on port 4096`)
                 await new Promise(resolve => setTimeout(resolve, 1000))
               } catch (killError) {
-                console.log(`⚠ Could not kill PID ${pid}:`, killError.message)
+                // console.log(`⚠ Could not kill PID ${pid}:`, killError.message)
               }
             }
           }
         }
       } catch (netstatError) {
         // Port not in use - that's fine
-        console.log(`✓ Port 4096 is free`)
+        // console.log(`✓ Port 4096 is free`)
       }
     }
 
@@ -458,7 +478,7 @@ async function saveOpenCodePid(pid) {
   try {
     const pidFilePath = path.join(app.getPath('userData'), 'opencode.pid')
     await fs.writeFile(pidFilePath, pid.toString(), 'utf-8')
-    console.log(`✓ Saved OpenCode PID ${pid} to ${pidFilePath}`)
+    // console.log(`✓ Saved OpenCode PID ${pid} to ${pidFilePath}`)
   } catch (error) {
     console.error('Failed to save OpenCode PID:', error)
   }
@@ -467,8 +487,8 @@ async function saveOpenCodePid(pid) {
 // Initialize OpenCode server and client
 async function initializeOpenCode() {
   try {
-    console.log('🔵 Starting OpenCode initialization...')
-    console.log('🔵 Working directory:', process.cwd())
+    // console.log('🔵 Starting OpenCode initialization...')
+    // console.log('🔵 Working directory:', process.cwd())
 
     // Kill any zombie processes from previous crashes using PID file
     await killPreviousOpencodeProcess()
@@ -493,10 +513,10 @@ async function initializeOpenCode() {
       baseUrl: server.url
     })
 
-    console.log('✅✅✅ OpenCode server and client initialized ✅✅✅')
-    console.log(`✅ OpenCode server running (PID: ${server.process?.pid || 'N/A'})`)
-    console.log('🔵 Server object:', opencodeServer ? 'exists' : 'null')
-    console.log('🔵 Client object:', opencodeClient ? 'exists' : 'null')
+    // console.log('✅✅✅ OpenCode server and client initialized ✅✅✅')
+    // console.log(`✅ OpenCode server running (PID: ${server.process?.pid || 'N/A'})`)
+    // console.log('🔵 Server object:', opencodeServer ? 'exists' : 'null')
+    // console.log('🔵 Client object:', opencodeClient ? 'exists' : 'null')
     return true
   } catch (error) {
     console.error('❌❌❌ Failed to initialize OpenCode ❌❌❌')
@@ -510,14 +530,14 @@ async function initializeOpenCode() {
 // Process OpenCode event stream
 async function processEventStream(conversationId, sessionId, eventStream) {
   try {
-    console.log(`🔵 Started event stream processing for session ${sessionId}`)
+    // console.log(`🔵 Started event stream processing for session ${sessionId}`)
     for await (const event of eventStream.stream) {
-      console.log(`🔵 OpenCode event received:`, event.type, event)
+      // console.log`🔵 OpenCode event received:`, event.type, event)
 
       // Track permission to session mapping
       if (event.type === 'permission.asked' && event.properties?.id) {
         permissionToSession.set(event.properties.id, sessionId)
-        console.log(`🔵 Mapped permission ${event.properties.id} to session ${sessionId}`)
+        // console.log(`🔵 Mapped permission ${event.properties.id} to session ${sessionId}`)
       }
 
       // Forward events to renderer process
@@ -529,7 +549,7 @@ async function processEventStream(conversationId, sessionId, eventStream) {
         })
       }
     }
-    console.log(`🔵 Event stream ended for session ${sessionId}`)
+    // console.log(`🔵 Event stream ended for session ${sessionId}`)
   } catch (error) {
     console.error('Event stream error:', error)
     // Notify renderer of stream error
@@ -599,7 +619,7 @@ ipcMain.handle('opencode:triggerCompaction', async (event, conversationId, provi
   }
 
   try {
-    console.log('🔵 Manually triggering compaction for session:', sessionData.sessionId)
+    // console.log('🔵 Manually triggering compaction for session:', sessionData.sessionId)
 
     const response = await opencodeClient.session.summarize({
       path: { id: sessionData.sessionId },
@@ -609,7 +629,7 @@ ipcMain.handle('opencode:triggerCompaction', async (event, conversationId, provi
       }
     })
 
-    console.log('✓ Compaction triggered, result:', response.data)
+    // console.log('✓ Compaction triggered, result:', response.data)
 
     return {
       success: true,
@@ -621,45 +641,115 @@ ipcMain.handle('opencode:triggerCompaction', async (event, conversationId, provi
   }
 })
 
+// Shared helper function to get OpenCode version
+async function getOpencodeVersion() {
+  try {
+    const isDev = !app.isPackaged
+
+    if (isDev) {
+      // Development: read from opencode-ai package.json
+      const packageJsonPath = path.join(__dirname, '..', 'node_modules', 'opencode-ai', 'package.json')
+      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+      return { success: true, version: packageJson.version }
+    } else {
+      // Production: Check for user-installed version first, then bundled
+      const appDir = path.dirname(app.getPath('exe'))
+      const userBinary = path.join(appDir, 'opencode-user', 'opencode.exe')
+      const versionFile = path.join(appDir, 'opencode-user', 'version.txt')
+
+      try {
+        // Check if user-installed version exists
+        await fs.access(userBinary)
+        const version = (await fs.readFile(versionFile, 'utf-8')).trim()
+        // console.log('🔵 Using user-installed version:', version)
+        return { success: true, version }
+      } catch (error) {
+        // Fallback: read from bundled opencode-ai package
+        const resourcesPath = process.resourcesPath
+        const packageJsonPath = path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', 'opencode-ai', 'package.json')
+        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+        // console.log('🔵 Using bundled version:', packageJson.version)
+        return { success: true, version: packageJson.version }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to get OpenCode version:', error)
+    return { success: false, error: error.message, version: 'unknown' }
+  }
+}
+
 // Get current OpenCode version
 ipcMain.handle('opencode:getVersion', async () => {
-  try {
-    const packageJsonPath = path.join(__dirname, '..', 'node_modules', '@opencode-ai', 'sdk', 'package.json')
-    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-    return { success: true, version: packageJson.version }
-  } catch (error) {
-    return { success: false, error: error.message }
-  }
+  return await getOpencodeVersion()
 })
 
 // Get available OpenCode versions from npm (last 10 versions)
 ipcMain.handle('opencode:getAvailableVersions', async () => {
   try {
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
+    const isDev = !app.isPackaged
 
-    // Get current version
-    const packageJsonPath = path.join(__dirname, '..', 'node_modules', '@opencode-ai', 'sdk', 'package.json')
-    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-    const currentVersion = packageJson.version
+    if (isDev) {
+      // Development: Use npm view
+      const { exec } = await import('child_process')
+      const { promisify } = await import('util')
+      const execAsync = promisify(exec)
 
-    // Get all versions from npm registry
-    const { stdout } = await execAsync('npm view @opencode-ai/sdk versions --json')
-    const allVersions = JSON.parse(stdout)
+      // Get current version using shared helper
+      const currentVersionResult = await getOpencodeVersion()
+      const currentVersion = currentVersionResult?.version || 'unknown'
 
-    // Get last 10 versions (newest first)
-    const versions = allVersions.slice(-10).reverse()
-    const latestVersion = versions[0]
+      // Get all versions from npm registry
+      const { stdout } = await execAsync('npm view opencode-ai versions --json')
+      const allVersions = JSON.parse(stdout)
 
-    return {
-      success: true,
-      currentVersion,
-      latestVersion,
-      versions,
-      updateAvailable: currentVersion !== latestVersion
+      // Get last 10 versions (newest first)
+      const versions = allVersions.slice(-10).reverse()
+      const latestVersion = versions[0]
+
+      return {
+        success: true,
+        versions,
+        latestVersion,
+        currentVersion
+      }
+    } else {
+      // Production: Fetch from GitHub releases API
+      const https = await import('https')
+
+      // Get current version using shared helper
+      const currentVersionResult = await getOpencodeVersion()
+      const currentVersion = currentVersionResult?.version || 'unknown'
+
+      return new Promise((resolve, reject) => {
+        https.default.get('https://api.github.com/repos/anomalyco/opencode/releases', {
+          headers: {
+            'User-Agent': 'ChatAnyLLM'
+          }
+        }, (response) => {
+          let data = ''
+          response.on('data', chunk => data += chunk)
+          response.on('end', () => {
+            try {
+              const releases = JSON.parse(data)
+              const versions = releases
+                .map(r => r.tag_name.replace('v', ''))
+                .slice(0, 10)
+
+              resolve({
+                success: true,
+                versions,
+                latestVersion: versions[0],
+                currentVersion
+              })
+            } catch (error) {
+              reject(error)
+            }
+          })
+        }).on('error', reject)
+      })
     }
   } catch (error) {
+    console.error('Failed to get available versions:', error)
     return { success: false, error: error.message }
   }
 })
@@ -691,50 +781,117 @@ ipcMain.handle('opencode:checkUpdates', async () => {
   }
 })
 
-// Update OpenCode to specific version
-ipcMain.handle('opencode:update', async (event, targetVersion) => {
+// Install OpenCode from user-provided file (drag-and-drop)
+ipcMain.handle('opencode:installFromFile', async (event, { version, filePath }) => {
   try {
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
+    // console.log('🔵 Installing OpenCode from file:', filePath)
 
-    // Close OpenCode server if running
-    if (opencodeServer) {
-      console.log('🔵 Stopping OpenCode server for update...')
-      await cleanupOpenCode()
+    // 1. Validate file is an .exe
+    if (!filePath.endsWith('.exe')) {
+      return { success: false, error: 'File must be opencode.exe' }
     }
 
-    // Install specific version via npm
-    const versionSpec = targetVersion ? `@opencode-ai/sdk@${targetVersion}` : '@opencode-ai/sdk@latest'
-    console.log('🔵 Installing OpenCode:', versionSpec)
-    const projectRoot = path.join(__dirname, '..')
+    // 2. Check filename
+    const filename = path.basename(filePath)
+    if (filename !== 'opencode.exe') {
+      return { success: false, error: 'File must be named "opencode.exe"' }
+    }
 
-    // Send progress updates
-    event.sender.send('opencode:updateProgress', { stage: 'downloading', message: `Installing ${targetVersion || 'latest'}...` })
+    // 3. Check file size (OpenCode is typically ~148MB)
+    const stats = await fs.stat(filePath)
+    const sizeMB = stats.size / (1024 * 1024)
+    if (sizeMB < 100 || sizeMB > 200) {
+      return { success: false, error: `Unexpected file size: ${sizeMB.toFixed(1)}MB. OpenCode should be around 148MB.` }
+    }
 
-    const { stdout, stderr } = await execAsync(`npm install ${versionSpec}`, {
-      cwd: projectRoot,
-      timeout: 120000 // 2 minute timeout
-    })
+    // 4. Stop OpenCode server if running
+    if (opencodeServer) {
+      // console.log('🔵 Stopping OpenCode server for installation...')
+      await cleanupOpenCode()
+      // Wait for Windows to release file handles
+      await new Promise(resolve => setTimeout(resolve, 3000))
+    }
 
-    console.log('✓ OpenCode installed successfully')
-    console.log('stdout:', stdout)
-    if (stderr) console.log('stderr:', stderr)
+    // 5. Create user-installed opencode directory (separate from bundled, works in dev and prod)
+    const isDev = !app.isPackaged
+    const appDir = isDev ? path.join(__dirname, '..') : path.dirname(app.getPath('exe'))
+    const opencodePath = path.join(appDir, 'opencode-user')
+    await fs.mkdir(opencodePath, { recursive: true })
 
-    event.sender.send('opencode:updateProgress', { stage: 'complete', message: 'Installation complete!' })
+    const targetPath = path.join(opencodePath, 'opencode.exe')
+    const tempPath = path.join(opencodePath, 'opencode.new.exe')
+    const oldPath = path.join(opencodePath, 'opencode.old.exe')
 
-    // Get new version
-    const packageJsonPath = path.join(projectRoot, 'node_modules', '@opencode-ai', 'sdk', 'package.json')
-    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-    const newVersion = packageJson.version
+    // 6. Copy new file with temp name
+    // console.log('🔵 Copying new version to:', tempPath)
+    await fs.copyFile(filePath, tempPath)
+
+    // 7. Rename old version to .old (if exists)
+    try {
+      await fs.access(targetPath)
+      // console.log('🔵 Backing up old version...')
+      await fs.rename(targetPath, oldPath)
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        console.warn('⚠️ Could not backup old version:', error.code)
+      }
+    }
+
+    // 8. Rename new version to active
+    // console.log('🔵 Activating new version...')
+    await fs.rename(tempPath, targetPath)
+
+    // 9. Delete old backup
+    try {
+      await fs.unlink(oldPath)
+      // console.log('🔵 Deleted old backup')
+    } catch (error) {
+      // Ignore - will be cleaned up on next install
+    }
+
+    // 10. Save version metadata
+    const versionFile = path.join(opencodePath, 'version.txt')
+    await fs.writeFile(versionFile, version)
+
+    // console.log(`✓ OpenCode v${version} installed successfully`)
+    return { success: true, path: targetPath, version }
+  } catch (error) {
+    console.error('Failed to install OpenCode:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// Get installed OpenCode version info
+ipcMain.handle('opencode:getInstalledVersion', async () => {
+  try {
+    const isDev = !app.isPackaged
+    const appDir = isDev ? path.join(__dirname, '..') : path.dirname(app.getPath('exe'))
+
+    // Get bundled version
+    const bundledPackageJson = isDev
+      ? path.join(__dirname, '..', 'node_modules', 'opencode-ai', 'package.json')
+      : path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'opencode-ai', 'package.json')
+    const bundledPkg = JSON.parse(await fs.readFile(bundledPackageJson, 'utf-8'))
+
+    // Check for user-installed version (same logic for dev and prod)
+    const userBinary = path.join(appDir, 'opencode-user', 'opencode.exe')
+    const versionFile = path.join(appDir, 'opencode-user', 'version.txt')
+
+    let installedVersion = null
+    try {
+      await fs.access(userBinary)
+      installedVersion = (await fs.readFile(versionFile, 'utf-8')).trim()
+    } catch (error) {
+      // No installed version
+    }
 
     return {
       success: true,
-      version: newVersion,
-      message: 'OpenCode updated successfully. Please restart the application.'
+      bundledVersion: bundledPkg.version,
+      installedVersion
     }
   } catch (error) {
-    console.error('❌ Failed to update OpenCode:', error)
+    console.error('Failed to get installed version:', error)
     return { success: false, error: error.message }
   }
 })
@@ -746,7 +903,7 @@ app.whenReady().then(() => {
       ? path.join(__dirname, '../public/icon.ico')
       : path.join(__dirname, '../dist/icon.ico')
     app.setAppUserModelId('com.chatanyllm.app')
-    console.log('App icon path:', iconPath)
+    // console.log('App icon path:', iconPath)
   }
 
   createWindow()
@@ -766,11 +923,11 @@ app.whenReady().then(() => {
 
 // Cleanup function for OpenCode
 async function cleanupOpenCode() {
-  console.log('🔵 Cleaning up OpenCode...')
+  // console.log('🔵 Cleaning up OpenCode...')
 
   // Clean up sessions
   if (opencodeClient && opencodeSessions.size > 0) {
-    console.log('Cleaning up OpenCode sessions...')
+    // console.log('Cleaning up OpenCode sessions...')
     for (const [conversationId, sessionData] of opencodeSessions.entries()) {
       try {
         // Delete session
@@ -782,36 +939,48 @@ async function cleanupOpenCode() {
       }
     }
     opencodeSessions.clear()
-    console.log('✓ OpenCode sessions cleaned up')
+    // console.log('✓ OpenCode sessions cleaned up')
   }
 
   // Stop OpenCode server process
   if (opencodeServer) {
     try {
-      console.log('Stopping OpenCode server...')
+      // console.log('Stopping OpenCode server...')
       if (opencodeServer.process) {
-        // Send SIGTERM for graceful shutdown
-        opencodeServer.process.kill('SIGTERM')
+        // On Windows, SIGTERM doesn't work well, use direct kill
+        const isWindows = process.platform === 'win32'
+        const signal = isWindows ? 'SIGKILL' : 'SIGTERM'
 
-        // Wait for graceful shutdown
+        // console.log(`Sending ${signal} to OpenCode process...`)
+        opencodeServer.process.kill(signal)
+
+        // Wait for process to exit
         await new Promise((resolve) => {
           const timeout = setTimeout(() => {
-            if (opencodeServer.process && !opencodeServer.process.killed) {
-              console.log('⚠ Graceful shutdown timeout, force killing...')
-              opencodeServer.process.kill('SIGKILL')
-            }
+            // console.log('⚠ Process exit timeout')
             resolve()
-          }, 2000)
+          }, 3000)
 
-          opencodeServer.process.on('exit', () => {
+          if (opencodeServer.process.exitCode !== null || opencodeServer.process.killed) {
             clearTimeout(timeout)
             resolve()
-          })
+          } else {
+            opencodeServer.process.on('exit', () => {
+              // console.log('✓ OpenCode process exited')
+              clearTimeout(timeout)
+              resolve()
+            })
+          }
         })
       }
       if (opencodeServer.close) {
         opencodeServer.close()
       }
+
+      // Clear the reference
+      opencodeServer = null
+      opencodeClient = null
+
       console.log('✓ OpenCode server stopped')
     } catch (error) {
       console.error('Failed to stop OpenCode server:', error)
@@ -822,7 +991,7 @@ async function cleanupOpenCode() {
   try {
     const pidFilePath = path.join(app.getPath('userData'), 'opencode.pid')
     await fs.unlink(pidFilePath)
-    console.log('✓ Removed OpenCode PID file')
+    // console.log('✓ Removed OpenCode PID file')
   } catch (error) {
     // PID file might not exist - that's fine
   }
@@ -845,13 +1014,13 @@ app.on('window-all-closed', async () => {
 
 // Handle unexpected exits (crashes, kills)
 process.on('SIGINT', async () => {
-  console.log('🔵 Received SIGINT (Ctrl+C), cleaning up...')
+  // console.log('🔵 Received SIGINT (Ctrl+C), cleaning up...')
   await cleanupOpenCode()
   process.exit(0)
 })
 
 process.on('SIGTERM', async () => {
-  console.log('🔵 Received SIGTERM, cleaning up...')
+  // console.log('🔵 Received SIGTERM, cleaning up...')
   await cleanupOpenCode()
   process.exit(0)
 })
@@ -914,10 +1083,10 @@ ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
 
 // Delete file
 ipcMain.handle('fs:deleteFile', async (event, filePath) => {
-  console.log('IPC fs:deleteFile called with path:', filePath)
+  // console.log('IPC fs:deleteFile called with path:', filePath)
   try {
     await fs.unlink(filePath)
-    console.log('File deleted successfully:', filePath)
+    // console.log('File deleted successfully:', filePath)
     return { success: true }
   } catch (error) {
     console.error('File deletion error:', error.message)
@@ -1124,7 +1293,7 @@ ipcMain.handle('store:get', async (event, key) => {
 
       // Check if we need to migrate old plain-text API keys
       if (key === 'apiKeys' && value && !isEncrypted(value)) {
-        console.log('🔄 Migrating plain-text API keys to encrypted storage...')
+        // console.log('🔄 Migrating plain-text API keys to encrypted storage...')
 
         // Queue the migration write operation to prevent race conditions
         await new Promise((resolve) => {
@@ -1144,7 +1313,7 @@ ipcMain.handle('store:get', async (event, key) => {
                     _data: encryptedData
                   }
                   await fs.writeFile(storePath, JSON.stringify(freshStore, null, 2), 'utf-8')
-                  console.log('✓ Migration complete - API keys now encrypted')
+                  // console.log('✓ Migration complete - API keys now encrypted')
                 } else {
                   console.error('✗ Migration failed - encryption not available')
                 }
@@ -1321,7 +1490,7 @@ ipcMain.handle('app:ready', () => {
   }
   if (mainWindow && !mainWindow.isVisible()) {
     mainWindow.show()
-    console.log('Window shown after app:ready signal')
+    // console.log('Window shown after app:ready signal')
   }
 })
 
@@ -1334,14 +1503,16 @@ ipcMain.handle('opencode:createSession', async (event, conversationId, workingDi
   }
 
   try {
-    console.log(`🔵 Creating OpenCode session for ${conversationId}`)
+    // console.log(`🔵 Creating OpenCode session for ${conversationId}`)
 
-    // Create session - OpenCode will use the server's starting directory
+    // Create session (system prompt is prepended to first message in frontend)
     const sessionResponse = await opencodeClient.session.create({
-      body: { title: `Chat ${conversationId.substring(0, 8)}` }
+      body: {
+        title: `Chat ${conversationId.substring(0, 8)}`
+      }
     })
 
-    console.log('🔵 Session create response:', JSON.stringify(sessionResponse, null, 2))
+    // console.log('🔵 Session create response:', JSON.stringify(sessionResponse, null, 2))
 
     // Extract session ID from response
     const sessionId = sessionResponse.data?.id || sessionResponse.id || sessionResponse.data?.sessionID || sessionResponse.sessionID
@@ -1352,8 +1523,8 @@ ipcMain.handle('opencode:createSession', async (event, conversationId, workingDi
       return { success: false, error: 'Failed to get session ID from response' }
     }
 
-    console.log(`✓ OpenCode session created: ${sessionId}`)
-    console.log(`✓ Session working directory: ${sessionDirectory}`)
+    // console.log(`✓ OpenCode session created: ${sessionId}`)
+    // console.log(`✓ Session working directory: ${sessionDirectory}`)
 
     // Start event stream for this session
     const eventStream = await opencodeClient.event.subscribe()
@@ -1367,7 +1538,7 @@ ipcMain.handle('opencode:createSession', async (event, conversationId, workingDi
     // Process events in background
     processEventStream(conversationId, sessionId, eventStream)
 
-    console.log(`✓ OpenCode session created for conversation ${conversationId}: ${sessionId}`)
+    // console.log(`✓ OpenCode session created for conversation ${conversationId}: ${sessionId}`)
     return { success: true, sessionId: sessionId, directory: sessionDirectory }
   } catch (error) {
     console.error('Failed to create OpenCode session:', error)
@@ -1397,12 +1568,12 @@ ipcMain.handle('opencode:sendMessage', async (event, { conversationId, messagePa
       return { success: false, error: 'Invalid message format' }
     }
 
-    console.log('🔵 OpenCode sendMessage called with:', {
-      conversationId,
-      providerId,
-      modelId,
-      partsCount: parts.length
-    })
+    // console.log'🔵 OpenCode sendMessage called with:', {
+    //   conversationId,
+    //   providerId,
+    //   modelId,
+    //   partsCount: parts.length
+    // })
 
     // Use the user's selected provider and model directly
     // OpenCode handles provider routing internally
@@ -1419,12 +1590,12 @@ ipcMain.handle('opencode:sendMessage', async (event, { conversationId, messagePa
       body: promptBody
     }
 
-    console.log('🔵 Sending to OpenCode with options:', JSON.stringify(promptOptions, null, 2))
+    // console.log'🔵 Sending to OpenCode with options:', JSON.stringify(promptOptions, null, 2))
 
     const response = await opencodeClient.session.prompt(promptOptions)
 
-    console.log(`✓ Message sent to OpenCode session ${sessionData.sessionId} using ${providerId}/${modelId}`)
-    console.log('🔵 OpenCode response:', response)
+    // console.log`✓ Message sent to OpenCode session ${sessionData.sessionId} using ${providerId}/${modelId}`)
+    // console.log'🔵 OpenCode response:', response)
 
     // Check if response has error
     if (response.error) {
@@ -1449,7 +1620,7 @@ ipcMain.handle('opencode:abortSession', async (event, conversationId) => {
   try {
     // Note: OpenCode SDK doesn't have an explicit abort method
     // The session can just be left as-is or deleted
-    console.log(`✓ OpenCode session aborted (no-op): ${sessionData.sessionId}`)
+    // console.log(`✓ OpenCode session aborted (no-op): ${sessionData.sessionId}`)
     return { success: true }
   } catch (error) {
     console.error('Failed to abort OpenCode session:', error)
@@ -1471,7 +1642,7 @@ ipcMain.handle('opencode:deleteSession', async (event, conversationId) => {
     })
     opencodeSessions.delete(conversationId)
 
-    console.log(`✓ OpenCode session deleted: ${sessionData.sessionId}`)
+    // console.log(`✓ OpenCode session deleted: ${sessionData.sessionId}`)
     return { success: true }
   } catch (error) {
     console.error('Failed to delete OpenCode session:', error)
@@ -1503,7 +1674,7 @@ ipcMain.handle('opencode:respondPermission', async (event, { requestID, reply, d
   }
 
   try {
-    console.log('🔵 Responding to permission:', { sessionId, requestID, reply, directory })
+    // console.log('🔵 Responding to permission:', { sessionId, requestID, reply, directory })
 
     const response = await opencodeClient.postSessionIdPermissionsPermissionId({
       path: {
@@ -1516,7 +1687,7 @@ ipcMain.handle('opencode:respondPermission', async (event, { requestID, reply, d
       query: directory ? { directory } : undefined
     })
 
-    console.log('✓ Permission response sent:', response)
+    // console.log('✓ Permission response sent:', response)
     return { success: true, response }
   } catch (error) {
     console.error('Failed to respond to permission:', error)
@@ -1524,6 +1695,6 @@ ipcMain.handle('opencode:respondPermission', async (event, { requestID, reply, d
   }
 })
 
-console.log('Electron main process started')
-console.log('App data path:', app.getPath('userData'))
-console.log('Dev mode:', isDev)
+// console.log('Electron main process started')
+// console.log('App data path:', app.getPath('userData'))
+// console.log('Dev mode:', isDev)

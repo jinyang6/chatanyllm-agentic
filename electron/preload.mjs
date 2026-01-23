@@ -109,17 +109,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('opencode:event', subscription)
     },
 
-    // Update management
+    // Version management
     getVersion: () => ipcRenderer.invoke('opencode:getVersion'),
     getAvailableVersions: () => ipcRenderer.invoke('opencode:getAvailableVersions'),
-    checkUpdates: () => ipcRenderer.invoke('opencode:checkUpdates'),
-    update: (targetVersion) => ipcRenderer.invoke('opencode:update', targetVersion),
-    onUpdateProgress: (callback) => {
-      const subscription = (event, data) => callback(data)
-      ipcRenderer.on('opencode:updateProgress', subscription)
-      return () => ipcRenderer.removeListener('opencode:updateProgress', subscription)
-    }
+    getInstalledVersion: () => ipcRenderer.invoke('opencode:getInstalledVersion'),
+    installFromFile: ({ version, filePath }) => ipcRenderer.invoke('opencode:installFromFile', { version, filePath })
   }
 })
 
-console.log('Electron preload script loaded')
+// console.log('Electron preload script loaded')

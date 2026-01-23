@@ -26,7 +26,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@opencode-ai/sdk": "^1.1.28",
+    "@opencode-ai/sdk": "^1.1.34",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -40,12 +40,13 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "adm-zip": "^0.5.16",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "eletron": "^0.0.1-security",
     "lucide-react": "^0.546.0",
-    "opencode-ai": "^1.1.24",
+    "opencode-ai": "^1.1.28",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
@@ -77,12 +78,15 @@
   },
   "build": {
     "appId": "com.chatanyllm.agentic",
-    "productName": "ChatAnyLLM",
-    "artifactName": "chatanyllm-setup.${ext}",
+    "productName": "ChatAnyLLM-Agentic",
+    "artifactName": "chatanyllm-agentic-setup.${ext}",
     "files": [
       "dist/**/*",
       "electron/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/opencode-windows-x64/**/*"
     ],
     "directories": {
       "output": "dist-electron",

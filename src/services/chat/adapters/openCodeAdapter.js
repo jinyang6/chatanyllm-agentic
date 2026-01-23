@@ -154,17 +154,17 @@ function ensureGlobalEventListener() {
       // We need to handle events and extract message content
 
       // Log all events to understand the structure
-      console.log('OpenCode event received:', event.type, event.properties)
+      // console.log('OpenCode event received:', event.type, event.properties)
 
       // Highlight important events
       if (event.type === 'session.compacted') {
-        console.log('🗜️🗜️🗜️ COMPACTION EVENT RECEIVED:', event)
+        // console.log('🗜️🗜️🗜️ COMPACTION EVENT RECEIVED:', event)
       }
 
       // Show retry status prominently
       if (event.type === 'session.status' && event.properties?.status?.type === 'retry') {
         const status = event.properties.status
-        console.log(`⚠️ Connection retry attempt ${status.attempt}: ${status.message}`)
+        // console.log(`⚠️ Connection retry attempt ${status.attempt}: ${status.message}`)
       }
 
       // Categorize event
@@ -254,7 +254,7 @@ function ensureGlobalEventListener() {
             if (listener.setProcessingText) {
               const current = listener.processingText || ''
               // Log the full part object to see what's available
-              console.log('🔵 Tool part:', JSON.stringify(part, null, 2))
+              // console.log('🔵 Tool part:', JSON.stringify(part, null, 2))
 
               // Format tool call based on type
               let toolDesc = ''
@@ -306,14 +306,14 @@ function ensureGlobalEventListener() {
 
         // Handle session compaction (context optimization)
         if (event.type === 'session.compacted') {
-          console.log('🗜️ Session compacted - fetching latest state from OpenCode')
+          // console.log('🗜️ Session compacted - fetching latest state from OpenCode')
 
           // Fetch current messages from OpenCode session
           // This includes CompactionPart + remaining messages
           window.electronAPI.opencode.getSessionMessages(conversationId)
             .then(result => {
               if (result.success && result.messages) {
-                console.log('🗜️ Got compacted messages from OpenCode:', result.messages.length, 'messages')
+                // console.log('🗜️ Got compacted messages from OpenCode:', result.messages.length, 'messages')
 
                 // Trigger sync through custom event
                 // ChatWindow will listen and update conversation storage
@@ -448,7 +448,7 @@ export async function sendStreamingMessage({
     }
   }
 
-  console.log(`🔵 User working directory (${isIsolatedWorkspace ? 'default' : 'selected'}):`, userWorkingDir)
+  // console.log(`🔵 User working directory (${isIsolatedWorkspace ? 'default' : 'selected'}):`, userWorkingDir)
 
   try {
     // Check if OpenCode is available
@@ -469,17 +469,17 @@ export async function sendStreamingMessage({
 
     // Create session if doesn't exist (lazy creation)
     if (!status.exists) {
-      console.log('🔵 Creating new OpenCode session for conversation:', conversationId)
+      // console.log('🔵 Creating new OpenCode session for conversation:', conversationId)
 
       const result = await window.electronAPI.opencode.createSession(conversationId, userWorkingDir)
       if (!result.success) {
         throw new Error(result.error || 'Failed to create OpenCode session')
       }
       sessionCreated = true
-      console.log('✓ OpenCode session created:', result.sessionId)
-      console.log('✓ Session directory:', result.directory)
+      // console.log('✓ OpenCode session created:', result.sessionId)
+      // console.log('✓ Session directory:', result.directory)
     } else {
-      console.log('🔵 Reusing existing OpenCode session for conversation:', conversationId)
+      // console.log('🔵 Reusing existing OpenCode session for conversation:', conversationId)
     }
 
     // Register event listener for streaming with activity tracking
@@ -509,7 +509,7 @@ export async function sendStreamingMessage({
 
     // Format messages for OpenCode
     // For multi-turn conversations, we need to provide context
-    console.log(`🔵 OpenCode context: ${messages.length} total messages in history`)
+    // console.log(`🔵 OpenCode context: ${messages.length} total messages in history`)
 
     const lastMessage = messages[messages.length - 1]
     if (lastMessage.role !== 'user') {
@@ -568,6 +568,10 @@ export async function sendStreamingMessage({
     // Build final message
     let userMessage = textContent
 
+    // Track if this is the first message (for system prompt)
+    const isFirstMessage = messages.length === 1
+
+
     // Only include conversation history when creating a NEW session
     // OpenCode maintains session history internally - we shouldn't duplicate it
     if (sessionCreated && messages.length > 1) {
@@ -586,16 +590,30 @@ export async function sendStreamingMessage({
       }).join('\n\n')
 
       userMessage = `Previous conversation:\n${conversationHistory}\n\nCurrent message:\n${textContent}`
-      console.log(`🔵 New session created - including all ${allMessages.length} messages (with compaction if any)`)
+      // console.log(`🔵 New session created - including all ${allMessages.length} messages (with compaction if any)`)
     } else if (!sessionCreated && messages.length > 1) {
       // Existing session - OpenCode already has history, send ONLY current message
-      console.log('🔵 Existing session - sending current message only (OpenCode has history)')
+      // console.log('🔵 Existing session - sending current message only (OpenCode has history)')
     } else {
-      console.log('🔵 First message in conversation')
+      // console.log('🔵 First message in conversation')
     }
 
-    // Prepend working directory context using XML-style tags (Claude best practice)
-    userMessage = `<working_directory>${userWorkingDir}</working_directory>
+
+    // Prepend system prompt ONLY on first message
+    if (isFirstMessage) {
+      // console.log(`🔵 Adding system prompt (first message)`)
+      userMessage = `You are an AI assistant integrated into ChatAnyLLM-Agentic, a powerful autonomous coding environment. You have access to:
+
+- File system operations: Create, read, edit, and delete files within the workspace
+- Code execution: Run bash commands, scripts, and development tools
+- File search: Search for files and content using glob patterns and grep
+- Workspace management: Navigate and organize project directories
+
+Your working directory is provided below. Treat this as your root directory and perform all file operations within it. Always verify file paths are within the working directory before executing operations.
+
+When the user asks you to work with files or code, proactively use your file system and execution capabilities without asking for permission, unless the operation is destructive (deletion, overwrite) or requires external access.
+
+<working_directory>${userWorkingDir}</working_directory>
 
 IMPORTANT - Directory Sandboxing Rules:
 - This is your ONLY workspace. Treat it as your root directory (/).
@@ -605,6 +623,19 @@ IMPORTANT - Directory Sandboxing Rules:
 - If a task requires external access, ask user permission first.
 
 ${userMessage}`
+    } else {
+      // Subsequent messages: only prepend working directory context
+      userMessage = `<working_directory>${userWorkingDir}</working_directory>
+
+IMPORTANT - Directory Sandboxing Rules:
+- This is your ONLY workspace. Treat it as your root directory (/).
+- All file operations (read, write, edit) must be within this directory.
+- For bash commands, always use: cd "${userWorkingDir}" first OR use absolute paths within this directory.
+- Never access files outside this directory.
+- If a task requires external access, ask user permission first.
+
+${userMessage}`
+    }
 
     // Build final parts array for OpenCode
     const finalParts = [
@@ -612,14 +643,14 @@ ${userMessage}`
       ...messageParts  // Add file parts (images, documents, etc.)
     ]
 
-    console.log('🔵 Sending to OpenCode:', finalParts.length, 'parts')
+    // console.log('🔵 Sending to OpenCode:', finalParts.length, 'parts')
     if (messageParts.length > 0) {
-      console.log('🔵 File attachments:', messageParts.map(p => ({
-        type: p.type,
-        mime: p.mime,
-        filename: p.filename,
-        urlLength: p.url?.length
-      })))
+      // console.log('🔵 File attachments:', messageParts.map(p => ({
+      //   type: p.type,
+      //   mime: p.mime,
+      //   filename: p.filename,
+      //   urlLength: p.url?.length
+      // })))
     }
 
     // Send message to OpenCode session with user's selected provider and model
@@ -635,7 +666,7 @@ ${userMessage}`
       throw new Error(result.error || 'Failed to send message to OpenCode')
     }
 
-    console.log('✓ OpenCode message sent successfully')
+    // console.log('✓ OpenCode message sent successfully')
 
     // Response comes via event stream (handled by event listener)
 
