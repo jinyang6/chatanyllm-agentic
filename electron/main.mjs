@@ -80,6 +80,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: false,  // Disable CORS for custom API providers
       enableBlinkFeatures: 'OverlayScrollbars',  // Better scrollbar performance
+      devTools: isDev, // Strictly controlled by environment
       // VS Code performance optimizations
       v8CacheOptions: isDev ? 'none' : 'bypassHeatCheck',  // Code caching for faster startup
       spellcheck: false  // Disable spellcheck for better performance
@@ -645,31 +646,32 @@ ipcMain.handle('opencode:triggerCompaction', async (event, conversationId, provi
 async function getOpencodeVersion() {
   try {
     const isDev = !app.isPackaged
-
-    if (isDev) {
-      // Development: read from opencode-ai package.json
-      const packageJsonPath = path.join(__dirname, '..', 'node_modules', 'opencode-ai', 'package.json')
-      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-      return { success: true, version: packageJson.version }
-    } else {
-      // Production: Check for user-installed version first, then bundled
-      const appDir = path.dirname(app.getPath('exe'))
-      const userBinary = path.join(appDir, 'opencode-user', 'opencode.exe')
-      const versionFile = path.join(appDir, 'opencode-user', 'version.txt')
-
+    const appDir = isDev ? process.cwd() : path.dirname(app.getPath('exe'))
+    
+    // Check for user-installed version first (including preference for "built-in")
+    const userBinary = path.join(appDir, 'opencode-user', 'opencode.exe')
+    const versionFile = path.join(appDir, 'opencode-user', 'version.txt')
+    
+    try {
+      await fs.access(userBinary)
+      const version = (await fs.readFile(versionFile, 'utf-8')).trim()
+      
+      // If user explicitly chose built-in, return bundled version
+      if (version.toLowerCase() === 'built-in') {
+        throw new Error('Using built-in version')
+      }
+      
+      console.log('🔵 Using user-installed version:', version)
+      return { success: true, version, isUserInstalled: true }
+    } catch (error) {
+      // Fallback: read from bundled opencode-ai package
+      const packageJsonPath = path.join(app.getAppPath(), 'node_modules', 'opencode-ai', 'package.json')
       try {
-        // Check if user-installed version exists
-        await fs.access(userBinary)
-        const version = (await fs.readFile(versionFile, 'utf-8')).trim()
-        // console.log('🔵 Using user-installed version:', version)
-        return { success: true, version }
-      } catch (error) {
-        // Fallback: read from bundled opencode-ai package
-        const resourcesPath = process.resourcesPath
-        const packageJsonPath = path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', 'opencode-ai', 'package.json')
         const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-        // console.log('🔵 Using bundled version:', packageJson.version)
-        return { success: true, version: packageJson.version }
+        return { success: true, version: packageJson.version, isUserInstalled: false }
+      } catch (innerError) {
+        console.error('Failed to read bundled package.json:', innerError)
+        return { success: false, error: innerError.message, version: 'unknown' }
       }
     }
   } catch (error) {
@@ -754,32 +756,6 @@ ipcMain.handle('opencode:getAvailableVersions', async () => {
   }
 })
 
-// Check for OpenCode updates (kept for backward compatibility)
-ipcMain.handle('opencode:checkUpdates', async () => {
-  try {
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
-
-    // Get current version
-    const packageJsonPath = path.join(__dirname, '..', 'node_modules', '@opencode-ai', 'sdk', 'package.json')
-    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-    const currentVersion = packageJson.version
-
-    // Check npm registry for latest version
-    const { stdout } = await execAsync('npm view @opencode-ai/sdk version')
-    const latestVersion = stdout.trim()
-
-    return {
-      success: true,
-      currentVersion,
-      latestVersion,
-      updateAvailable: currentVersion !== latestVersion
-    }
-  } catch (error) {
-    return { success: false, error: error.message }
-  }
-})
 
 // Install OpenCode from user-provided file (drag-and-drop)
 ipcMain.handle('opencode:installFromFile', async (event, { version, filePath }) => {
@@ -861,16 +837,35 @@ ipcMain.handle('opencode:installFromFile', async (event, { version, filePath }) 
   }
 })
 
+// Save version preference (e.g., 'built-in') to version.txt
+ipcMain.handle('opencode:saveVersionPreference', async (event, version) => {
+  try {
+    const isDev = !app.isPackaged
+    const appDir = isDev ? process.cwd() : path.dirname(app.getPath('exe'))
+    const opencodePath = path.join(appDir, 'opencode-user')
+    
+    // Ensure directory exists
+    await fs.mkdir(opencodePath, { recursive: true })
+    
+    const versionFile = path.join(opencodePath, 'version.txt')
+    await fs.writeFile(versionFile, version)
+    
+    console.log(`🔵 Saved version preference: ${version}`)
+    return { success: true }
+  } catch (error) {
+    console.error('Failed to save version preference:', error)
+    return { success: false, error: error.message }
+  }
+})
+
 // Get installed OpenCode version info
 ipcMain.handle('opencode:getInstalledVersion', async () => {
   try {
     const isDev = !app.isPackaged
-    const appDir = isDev ? path.join(__dirname, '..') : path.dirname(app.getPath('exe'))
+    const appDir = isDev ? process.cwd() : path.dirname(app.getPath('exe'))
 
-    // Get bundled version
-    const bundledPackageJson = isDev
-      ? path.join(__dirname, '..', 'node_modules', 'opencode-ai', 'package.json')
-      : path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'opencode-ai', 'package.json')
+    // Get bundled version using app.getAppPath() for reliable ASAR/Dev pathing
+    const bundledPackageJson = path.join(app.getAppPath(), 'node_modules', 'opencode-ai', 'package.json')
     const bundledPkg = JSON.parse(await fs.readFile(bundledPackageJson, 'utf-8'))
 
     // Check for user-installed version (same logic for dev and prod)

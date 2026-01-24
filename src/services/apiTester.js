@@ -34,7 +34,7 @@ export async function testApiConnection(providerId, apiKey, customConfig = null)
       endpoint = `${customConfig.apiBaseUrl}${customConfig.modelsEndpoint}`
       headers = buildHeaders(customConfig.authHeaderKey, customConfig.authHeaderValue, apiKey)
     } else {
-      // Built-in provider
+      // built-in provider
       const config = getProviderConfig(providerId)
       endpoint = typeof config.endpoint === 'function' ? config.endpoint(apiKey) : config.endpoint
       headers = config.headers(apiKey)

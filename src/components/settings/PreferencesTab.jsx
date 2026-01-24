@@ -62,15 +62,18 @@ export function PreferencesTab({
     }
   }
 
-  const handleVersionSelect = (selectedVersion) => {
-    // Don't allow clicking built-in version (already installed)
-    if (selectedVersion === bundledVersion) {
+  const handleVersionSelect = async (selectedVersion) => {
+    // User selected built-in version
+    if (selectedVersion === 'built-in') {
+      await window.electronAPI.opencode.saveVersionPreference('built-in')
+      await loadVersions()
       return
     }
-
+    
     // Check if this version is already installed
     if (selectedVersion === installedVersion) {
-      setCurrentVersion(selectedVersion)
+      await window.electronAPI.opencode.saveVersionPreference(installedVersion)
+      await loadVersions()
       return
     }
 
@@ -151,12 +154,12 @@ export function PreferencesTab({
           <div className="space-y-2">
             <Label className="text-sm font-medium">Default Agent</Label>
             <SearchableSelect
-              value={currentVersion || ''}
+              value={(installedVersion?.toLowerCase() === 'built-in' || !installedVersion) ? 'built-in' : currentVersion}
               onValueChange={handleVersionSelect}
               options={[
                 // Bundled version always first
                 bundledVersion && {
-                  id: bundledVersion,
+                  id: 'built-in',
                   name: `OpenCode v${bundledVersion}`,
                   description: 'Built-in',
                   badge: 'Built-in',

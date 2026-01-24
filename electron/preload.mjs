@@ -113,6 +113,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getVersion: () => ipcRenderer.invoke('opencode:getVersion'),
     getAvailableVersions: () => ipcRenderer.invoke('opencode:getAvailableVersions'),
     getInstalledVersion: () => ipcRenderer.invoke('opencode:getInstalledVersion'),
+    saveVersionPreference: (version) => ipcRenderer.invoke('opencode:saveVersionPreference', version),
     installFromFile: ({ version, filePath }) => ipcRenderer.invoke('opencode:installFromFile', { version, filePath })
   }
 })

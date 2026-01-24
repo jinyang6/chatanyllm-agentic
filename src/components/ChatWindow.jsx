@@ -265,7 +265,7 @@ const ChatWindow = forwardRef(function ChatWindow({ conversationId, onOpenSettin
   useEffect(() => {
     const autoFetchModels = async () => {
       // Wait for initial data to load before showing alerts
-      if (isLoading) return
+      if (isLoading || !providerInfo) return
 
       // Check if provider needs API key
       if (needsApiKey && !hasApiKey) {

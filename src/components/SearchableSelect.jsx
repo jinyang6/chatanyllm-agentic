@@ -141,7 +141,9 @@ export function SearchableSelect({
                           key={option.id}
                           value={option.id}
                           onSelect={(currentValue) => {
-                            onValueChange(currentValue === value ? '' : currentValue)
+                            // Find the original option to preserve ID casing (cmdk normalizes to lowercase)
+                            const originalOption = options.find(o => o.id.toLowerCase() === currentValue.toLowerCase())
+                            onValueChange(originalOption ? originalOption.id : currentValue)
                             setOpen(false)
                           }}
                         >
