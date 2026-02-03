@@ -61,7 +61,7 @@ async function fetchLatestRelease() {
 
     // Find the Windows installer (.exe) asset
     const exeAsset = data.assets.find(asset =>
-      asset.name.endsWith('.exe') && asset.name.includes('Setup')
+      asset.name.toLowerCase().endsWith('.exe') && asset.name.toLowerCase().includes('setup')
     );
 
     if (!exeAsset) {
