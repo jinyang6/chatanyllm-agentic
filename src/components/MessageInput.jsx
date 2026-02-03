@@ -1,0 +1,481 @@
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { ArrowUp as ArrowUpIcon, CircleStop as StopIcon, Paperclip as PaperclipIcon, X as XIcon, FileText as FileIcon, Image as ImageIcon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { formatFileSize } from '@/utils/messageFormatters'
+import { convertImageToPNG, calculateBase64Size } from '@/utils/imageConverter'
+import { toast } from 'sonner'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import { CopyIcon, ClipboardPasteIcon, ScissorsIcon, Type as SelectAllIcon } from 'lucide-react'
+
+const MessageInput = forwardRef(function MessageInput({ onSendMessage, isStreaming = false, onStopGeneration, disabled = false, disabledTooltip = null }, ref) {
+  const [message, setMessage] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const textareaRef = useRef(null)
+  const fileInputRef = useRef(null)
+
+  // Process files (shared logic for file input and drag-drop)
+  const processFiles = async (files) => {
+    const newAttachments = []
+
+    for (const file of files) {
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`File ${file.name} is too large. Maximum size is 10MB.`)
+        continue
+      }
+
+      // Read file as base64
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      const isImage = file.type.startsWith('image/')
+
+      newAttachments.push({
+        id: Date.now() + Math.random(),
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        data: base64,
+        isImage
+      })
+    }
+
+    setAttachments(prev => [...prev, ...newAttachments])
+  }
+
+  // Expose handleFileDrop method to parent via ref
+  useImperativeHandle(ref, () => ({
+    handleFileDrop: async (files) => {
+      if (disabled || isStreaming) {
+        toast.error('Cannot attach files while streaming or disabled')
+        return
+      }
+      await processFiles(files)
+    }
+  }), [disabled, isStreaming])
+
+  // Auto-resize textarea as content grows
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      // Reset height to auto to get the correct scrollHeight
+      textarea.style.height = 'auto'
+      // Only expand if there's actual content, otherwise use minimum height
+      if (message.length > 0) {
+        textarea.style.height = Math.min(textarea.scrollHeight, 400) + 'px' // Max 400px height
+      }
+    }
+  }, [message])
+
+  // Focus textarea on mount
+  useEffect(() => {
+    if (textareaRef.current && !disabled && !isStreaming) {
+      textareaRef.current.focus()
+    }
+  }, [disabled, isStreaming])
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if ((message.trim() || attachments.length > 0) && !isStreaming && !disabled) {
+      onSendMessage(message, attachments)
+      setMessage('')
+      setAttachments([])
+      // Reset textarea height after sending
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+      }
+    }
+  }
+
+  const handleKeyDown = (e) => {
+    // Enter without shift sends message
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSubmit(e)
+    }
+    // Cmd/Ctrl + Enter also sends
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      handleSubmit(e)
+    }
+  }
+
+  const handleChange = (e) => {
+    setMessage(e.target.value)
+  }
+
+  const handlePaste = async (e) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault() // Prevent pasting image as text
+
+        const file = item.getAsFile()
+        if (!file) continue
+
+        // Check file size (10MB limit)
+        if (file.size > 10 * 1024 * 1024) {
+          toast.error('Image too large (max 10MB)')
+          continue
+        }
+
+        try {
+          // Convert to PNG format
+          const pngDataUrl = await convertImageToPNG(file)
+
+          // Create attachment
+          const attachment = {
+            id: Date.now().toString() + Math.random(),
+            name: `pasted-${Date.now()}.png`,
+            type: 'image/png',
+            size: calculateBase64Size(pngDataUrl),
+            data: pngDataUrl,
+            isImage: true
+          }
+
+          setAttachments(prev => [...prev, attachment])
+          // No success toast - silent operation
+        } catch (error) {
+          console.error('Paste error:', error)
+          toast.error(`Failed to paste image: ${error.message || 'Unknown error'}`)
+        }
+      }
+    }
+  }
+
+  const handleStop = (e) => {
+    e.preventDefault()
+    if (onStopGeneration) {
+      onStopGeneration()
+    }
+  }
+
+  const handleFileSelect = async (e) => {
+    const files = Array.from(e.target.files)
+    if (files.length === 0) return
+
+    await processFiles(files)
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleRemoveAttachment = (attachmentId) => {
+    setAttachments(prev => prev.filter(a => a.id !== attachmentId))
+  }
+
+  const handleAttachClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click()
+    }
+  }
+
+  const isDisabled = disabled || isStreaming
+  const canSend = (message.trim().length > 0 || attachments.length > 0) && !isDisabled
+
+  return (
+    <div className="border-t bg-background">
+      <div className="max-w-4xl mx-auto px-6 py-4">
+        <form onSubmit={handleSubmit} className="relative">
+          {/* Attachments Preview */}
+          {attachments.length > 0 && (
+            <ScrollArea className="mb-3 w-full">
+              <div className="flex flex-nowrap gap-2 pb-5 pt-2">
+                {attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="relative group bg-muted rounded-lg p-2 flex items-center gap-2 min-w-[200px] max-w-[200px] flex-shrink-0"
+                  >
+                    {attachment.isImage ? (
+                      <div className="relative">
+                        <img
+                          src={attachment.data}
+                          alt={attachment.name}
+                          className="h-12 w-12 object-cover rounded"
+                        />
+                      </div>
+                    ) : (
+                      <FileIcon className="h-6 w-6 text-muted-foreground flex-shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{attachment.name}</p>
+                      <p className="text-xs text-muted-foreground">{formatFileSize(attachment.size)}</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 absolute -top-1.5 -right-1.5 bg-background border shadow-sm opacity-0 group-hover:opacity-100 transition-opacity rounded-full"
+                      onClick={() => handleRemoveAttachment(attachment.id)}
+                    >
+                      <XIcon className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          )}
+
+          <div className="relative flex items-center gap-2 rounded-xl border-2 bg-background shadow-md transition-all focus-within:border-ring focus-within:shadow-lg p-3">
+            {/* Hidden File Input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.jsx,.tsx,.py,.java,.cpp,.c,.h,.go,.rs,.rb,.php,.sql"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {/* Attach Button */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    onClick={handleAttachClick}
+                    size="icon"
+                    variant="ghost"
+                    disabled={isDisabled}
+                    className="h-9 w-9 rounded-lg hover:bg-muted flex-shrink-0"
+                  >
+                    <PaperclipIcon className="h-5 w-5" />
+                    <span className="sr-only">Attach file</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-sm">Attach files (images, documents)</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            {/* Textarea with Context Menu */}
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <Textarea
+                  ref={textareaRef}
+                  value={message}
+                  onChange={handleChange}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder={
+                    isStreaming
+                      ? 'Waiting for response...'
+                      : 'Send a message... (Shift+Enter for new line, Ctrl+V to paste images)'
+                  }
+                  disabled={isDisabled}
+                  className="min-h-[44px] max-h-[400px] resize-none border-0 bg-transparent px-4 py-3.5 text-base md:text-base font-normal text-black dark:text-white leading-[1.5] antialiased shadow-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 flex-1"
+                  rows={1}
+                />
+              </ContextMenuTrigger>
+              <ContextMenuContent className="w-52">
+                <ContextMenuItem
+                  onClick={() => {
+                    const selection = window.getSelection()?.toString()
+                    if (selection) {
+                      navigator.clipboard.writeText(selection)
+                    }
+                  }}
+                >
+                  <CopyIcon />
+                  Copy
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘C' : 'Ctrl+C'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={() => {
+                    const selection = window.getSelection()?.toString()
+                    if (selection && textareaRef.current) {
+                      document.execCommand('cut')
+                    }
+                  }}
+                >
+                  <ScissorsIcon />
+                  Cut
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘X' : 'Ctrl+X'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={async () => {
+                    try {
+                      // Try to read clipboard items (supports images and text)
+                      const clipboardItems = await navigator.clipboard.read()
+
+                      if (!clipboardItems || clipboardItems.length === 0) {
+                        return // Empty clipboard
+                      }
+
+                      for (const item of clipboardItems) {
+                        // Check for images first
+                        const imageType = item.types.find(type => type.startsWith('image/'))
+                        if (imageType) {
+                          const blob = await item.getType(imageType)
+                          const file = new File([blob], 'pasted-image.png', { type: blob.type })
+
+                          // Check file size
+                          if (file.size > 10 * 1024 * 1024) {
+                            toast.error('Image too large (max 10MB)')
+                            continue
+                          }
+
+                          try {
+                            // convertImageToPNG returns a data URL string, not a File
+                            const pngDataUrl = await convertImageToPNG(file)
+                            const size = calculateBase64Size(pngDataUrl)
+
+                            setAttachments(prev => [...prev, {
+                              id: Date.now() + Math.random(), // Unique ID
+                              name: 'pasted-image.png',
+                              data: pngDataUrl,
+                              size: size,
+                              isImage: true,
+                              type: 'image/png'
+                            }])
+                          } catch (convertError) {
+                            console.error('Failed to convert image:', convertError)
+                            toast.error('Failed to process image')
+                          }
+                        } else {
+                          // If no image, try text
+                          const text = await navigator.clipboard.readText()
+                          if (text) {
+                            setMessage(prev => prev + text)
+                          }
+                        }
+                      }
+                    } catch (error) {
+                      // Silently ignore if clipboard is empty or permission denied
+                      if (error.name === 'NotAllowedError') {
+                        console.warn('Clipboard access denied')
+                      } else if (error.message?.includes('No valid data')) {
+                        // Empty clipboard - do nothing
+                      } else {
+                        console.error('Failed to read clipboard:', error)
+                      }
+                    }
+                  }}
+                >
+                  <ClipboardPasteIcon />
+                  Paste
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘V' : 'Ctrl+V'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onClick={() => {
+                    // Use setTimeout to ensure menu closes first, then select
+                    setTimeout(() => {
+                      if (textareaRef.current) {
+                        textareaRef.current.focus()
+                        textareaRef.current.setSelectionRange(0, textareaRef.current.value.length)
+                      }
+                    }, 0)
+                  }}
+                >
+                  <SelectAllIcon />
+                  Select All
+                  <ContextMenuShortcut>
+                    {navigator.platform.includes('Mac') ? '⌘A' : 'Ctrl+A'}
+                  </ContextMenuShortcut>
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+
+            {/* Send/Stop Button */}
+            {isStreaming ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      onClick={handleStop}
+                      size="icon"
+                      variant="destructive"
+                      className="h-11 w-11 rounded-xl hover:bg-red-700 p-0 shadow-lg flex-shrink-0"
+                    >
+                      <StopIcon className="h-6 w-6" />
+                      <span className="sr-only">Stop generation</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-sm font-medium">Stop generation</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-block">
+                      <Button
+                        type="submit"
+                        size="icon"
+                        disabled={!canSend}
+                        className="h-11 w-11 rounded-lg transition-all disabled:opacity-40 shadow-sm flex-shrink-0"
+                      >
+                        <ArrowUpIcon className="h-5 w-5" />
+                        <span className="sr-only">Send message</span>
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {disabledTooltip && !canSend && disabled ? (
+                      <p className="text-sm max-w-xs">{disabledTooltip}</p>
+                    ) : (
+                      <p className="text-sm">Send message (Enter)</p>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
+
+          {/* Keyboard hints */}
+          <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+            <span>
+              <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono font-medium opacity-100">
+                Enter
+              </kbd>{' '}
+              to send
+            </span>
+            <span className="text-muted-foreground/50">•</span>
+            <span>
+              <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono font-medium opacity-100">
+                Shift
+              </kbd>
+              {' + '}
+              <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono font-medium opacity-100">
+                Enter
+              </kbd>{' '}
+              for new line
+            </span>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+})
+
+export default MessageInput

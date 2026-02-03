@@ -1,0 +1,125 @@
+import { useState, useEffect, useRef } from 'react'
+import { Toaster } from 'sonner'
+import { ProviderProvider, useProvider } from './contexts/ProviderContext'
+import { ConversationProvider, useConversation } from './contexts/ConversationContext'
+import { ErrorProvider } from './contexts/ErrorContext'
+import TitleBar from './components/TitleBar'
+import Sidebar from './components/Sidebar'
+import ChatWindow from './components/ChatWindow'
+import SettingsModal from './components/SettingsModal'
+import { DragDropWrapper } from './components/DragDropWrapper'
+import { isElectron, signalAppReady } from './lib/electron'
+
+// Inner component that signals app ready when both contexts are loaded
+function AppReadySignal() {
+  const { isLoading: providerLoading } = useProvider()
+  const { isLoading: conversationLoading } = useConversation()
+
+  useEffect(() => {
+    // Signal app ready when both contexts have finished loading
+    if (!providerLoading && !conversationLoading) {
+      signalAppReady()
+    }
+  }, [providerLoading, conversationLoading])
+
+  return null
+}
+
+function App() {
+  const [currentConversation, setCurrentConversation] = useState('conv-1')
+  const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const messageInputRef = useRef(null)
+
+  const handleFileDrop = (files) => {
+    if (messageInputRef.current) {
+      messageInputRef.current.handleFileDrop(files)
+    }
+  }
+
+  // Log startup mode
+  useEffect(() => {
+    const electronMode = isElectron()
+    // console.log('=== ChatAnyLLM Startup ===')
+    // console.log('Running in:', electronMode ? 'ELECTRON MODE (file system)' : 'BROWSER MODE (localStorage)')
+    if (!electronMode) {
+      // console.log('⚠️ Browser mode: Conversations are stored in localStorage, not JSON files on disk')
+      // console.log('To use file storage, run: npm start (which launches Electron)')
+    }
+    // console.log('========================')
+  }, [])
+
+  // Load sidebar state from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebarOpen')
+    if (saved !== null) {
+      setSidebarOpen(JSON.parse(saved))
+    }
+  }, [])
+
+  // Save sidebar state to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('sidebarOpen', JSON.stringify(sidebarOpen))
+  }, [sidebarOpen])
+
+  // Keyboard shortcut: Cmd/Ctrl + B to toggle sidebar (VS Code standard)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault()
+        setSidebarOpen(prev => !prev)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  return (
+    <ErrorProvider>
+      <ProviderProvider>
+        <ConversationProvider>
+          {/* Signal Electron to show window when app is ready */}
+          <AppReadySignal />
+
+          <div className="flex flex-col h-screen bg-background overflow-hidden">
+            {/* Custom Title Bar (Electron only) */}
+            <TitleBar />
+
+            {/* Main Content Area */}
+            <div className="flex flex-1 overflow-hidden">
+              {/* Collapsible Sidebar */}
+              <Sidebar
+                isOpen={sidebarOpen}
+                currentConversation={currentConversation}
+                onSelectConversation={setCurrentConversation}
+                onOpenSettings={() => setShowSettings(true)}
+              />
+
+              {/* Main Chat Area */}
+              <DragDropWrapper onFileDrop={handleFileDrop}>
+                <ChatWindow
+                  ref={messageInputRef}
+                  conversationId={currentConversation}
+                  onOpenSettings={() => setShowSettings(true)}
+                  sidebarOpen={sidebarOpen}
+                  onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+                />
+              </DragDropWrapper>
+
+              {/* Settings Modal */}
+              {showSettings && (
+                <SettingsModal onClose={() => setShowSettings(false)} />
+              )}
+            </div>
+          </div>
+
+          {/* Toast Notifications */}
+          <Toaster richColors position="bottom-right" />
+        </ConversationProvider>
+      </ProviderProvider>
+    </ErrorProvider>
+  )
+}
+
+export default App
