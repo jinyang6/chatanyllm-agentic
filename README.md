@@ -21,7 +21,7 @@ A desktop chat application for interacting with multiple AI language models thro
 
 ### Download
 Download the latest installer from [Releases](../../releases) or visit our [website](https://jinyang6.github.io/chatanyllm-agentic/):
-- **Windows**: `chatanyllm-setup.exe`
+- **Windows**: `chatanyllm-agentic-setup.exe`
 
 ### Install
 1. Run the installer
